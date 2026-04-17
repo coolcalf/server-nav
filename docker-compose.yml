@@ -1,0 +1,35 @@
+services:
+  server-hub:
+    build: .
+    image: server-hub:latest
+    container_name: server-hub
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: change-me-please
+      AUTH_SECRET: replace-with-a-long-random-string
+      DB_PATH: /data/app.db
+      # 可调：服务巡检 / 主机巡检 周期与超时
+      HEALTH_INTERVAL_MS: "30000"
+      HEALTH_TIMEOUT_MS: "5000"
+      HOST_INTERVAL_MS: "30000"
+      HOST_TIMEOUT_MS: "5000"
+    volumes:
+      - ./data:/data
+
+  # 可选：在 docker 宿主机上自动跑一个 node_exporter，
+  # 然后在 /hosts 里添加 http://node_exporter:9100/metrics 即可监控宿主机。
+  # 不需要的话，整段删掉或注释。
+  node_exporter:
+    image: prom/node-exporter:latest
+    container_name: node_exporter
+    restart: unless-stopped
+    pid: host
+    network_mode: host
+    command:
+      - "--path.rootfs=/host"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|var/lib/docker/.+)($$|/)"
+    volumes:
+      - "/:/host:ro,rslave"

@@ -1,0 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --primary: 222 47% 11%;
+    --primary-foreground: 210 20% 98%;
+    --accent: 220 14% 96%;
+    --accent-foreground: 222 47% 11%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 222 84% 48%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --radius: 0.75rem;
+  }
+  .dark {
+    --background: 222 47% 5%;
+    --foreground: 210 20% 98%;
+    --card: 222 47% 8%;
+    --card-foreground: 210 20% 98%;
+    --muted: 217 33% 13%;
+    --muted-foreground: 215 20% 65%;
+    --primary: 210 20% 98%;
+    --primary-foreground: 222 47% 11%;
+    --accent: 217 33% 15%;
+    --accent-foreground: 210 20% 98%;
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 210 100% 66%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+  }
+
+  /* -------- Accent 主题：通过 html[data-accent] 切换强调色 -------- */
+  /* 浅色下的强调色 */
+  [data-accent="blue"]    { --ring: 221 83% 53%; --primary: 221 83% 53%; --primary-foreground: 0 0% 100%; }
+  [data-accent="emerald"] { --ring: 160 84% 39%; --primary: 160 84% 39%; --primary-foreground: 0 0% 100%; }
+  [data-accent="rose"]    { --ring: 346 77% 50%; --primary: 346 77% 50%; --primary-foreground: 0 0% 100%; }
+  [data-accent="violet"]  { --ring: 262 83% 58%; --primary: 262 83% 58%; --primary-foreground: 0 0% 100%; }
+  [data-accent="amber"]   { --ring: 32 95% 44%;  --primary: 32 95% 44%;  --primary-foreground: 0 0% 100%; }
+  /* slate 为默认，不覆盖 */
+
+  /* 深色下适当提亮 */
+  .dark[data-accent="blue"],    .dark [data-accent="blue"]    { --ring: 213 94% 68%; --primary: 213 94% 68%; --primary-foreground: 222 47% 11%; }
+  .dark[data-accent="emerald"], .dark [data-accent="emerald"] { --ring: 152 76% 55%; --primary: 152 76% 55%; --primary-foreground: 222 47% 11%; }
+  .dark[data-accent="rose"],    .dark [data-accent="rose"]    { --ring: 346 91% 65%; --primary: 346 91% 65%; --primary-foreground: 222 47% 11%; }
+  .dark[data-accent="violet"],  .dark [data-accent="violet"]  { --ring: 258 90% 72%; --primary: 258 90% 72%; --primary-foreground: 222 47% 11%; }
+  .dark[data-accent="amber"],   .dark [data-accent="amber"]   { --ring: 43 96% 58%;  --primary: 43 96% 58%;  --primary-foreground: 222 47% 11%; }
+
+  * { border-color: hsl(var(--border)); }
+  html, body { height: 100%; }
+  body {
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* 背景装饰 */
+.bg-grid {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, hsl(var(--ring) / 0.15), transparent),
+    linear-gradient(to right, hsl(var(--border) / 0.35) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--border) / 0.35) 1px, transparent 1px);
+  background-size: auto, 32px 32px, 32px 32px;
+}
+
+.card-surface {
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+.card-surface:hover {
+  transform: translateY(-2px);
+  border-color: hsl(var(--ring) / 0.45);
+  box-shadow: 0 10px 30px -12px hsl(var(--ring) / 0.25);
+}
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+  height: 2.25rem; padding: 0 0.9rem; border-radius: 0.6rem;
+  font-size: 0.875rem; font-weight: 500;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.btn-primary:hover { opacity: 0.9; }
+.btn-outline { border-color: hsl(var(--border)); background: transparent; color: hsl(var(--foreground)); }
+.btn-outline:hover { background: hsl(var(--accent)); }
+.btn-ghost { background: transparent; color: hsl(var(--foreground)); }
+.btn-ghost:hover { background: hsl(var(--accent)); }
+.btn-danger { background: hsl(var(--destructive)); color: hsl(var(--destructive-foreground)); }
+.btn-danger:hover { opacity: 0.9; }
+
+.input {
+  width: 100%; height: 2.25rem; padding: 0 0.75rem; border-radius: 0.6rem;
+  border: 1px solid hsl(var(--input)); background: hsl(var(--background));
+  color: hsl(var(--foreground)); font-size: 0.875rem; outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.input:focus { border-color: hsl(var(--ring)); box-shadow: 0 0 0 3px hsl(var(--ring) / 0.2); }
+textarea.input { height: auto; min-height: 5rem; padding: 0.5rem 0.75rem; resize: vertical; }
+
+.label { display: block; font-size: 0.8rem; font-weight: 500; color: hsl(var(--muted-foreground)); margin-bottom: 0.375rem; }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  padding: 0 0.5rem; height: 1.25rem; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 500;
+  background: hsl(var(--muted)); color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border));
+}
+
+.dot { width: 8px; height: 8px; border-radius: 999px; display: inline-block; }
+.dot-ok { background: #10b981; box-shadow: 0 0 0 3px rgb(16 185 129 / 0.15); }
+.dot-bad { background: #ef4444; box-shadow: 0 0 0 3px rgb(239 68 68 / 0.15); }
+.dot-pending { background: hsl(var(--muted-foreground)); opacity: 0.6; }
+
+/* 对话框背景 */
+.modal-mask { position: fixed; inset: 0; background: rgb(0 0 0 / 0.45); backdrop-filter: blur(4px); z-index: 40; }
+.modal-panel { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 1rem; z-index: 50; }
