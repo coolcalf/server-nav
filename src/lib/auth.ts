@@ -14,23 +14,51 @@ function getSecret() {
 
 export type Role = "admin" | "viewer";
 
-export async function createSession(payload: { sub: string; uid: number; role: Role }) {
+function shouldUseSecureCookie() {
+  return process.env.COOKIE_SECURE === "true";
+}
+
+function serializeCookie(
+  name: string,
+  value: string,
+  opts: { httpOnly?: boolean; sameSite?: string; secure?: boolean; path?: string; maxAge?: number },
+): string {
+  let str = `${encodeURIComponent(name)}=${encodeURIComponent(value)}`;
+  if (opts.path) str += `; Path=${opts.path}`;
+  if (opts.maxAge !== undefined) {
+    str += `; Max-Age=${opts.maxAge}`;
+    const expires = new Date(Date.now() + opts.maxAge * 1000);
+    str += `; Expires=${expires.toUTCString()}`;
+  }
+  if (opts.secure) str += "; Secure";
+  if (opts.httpOnly) str += "; HttpOnly";
+  if (opts.sameSite) str += `; SameSite=${opts.sameSite}`;
+  return str;
+}
+
+export async function createSession(payload: { sub: string; uid: number; role: Role }): Promise<string> {
   const token = await new SignJWT(payload)
     .setProtectedHeader({ alg: ALG })
     .setIssuedAt()
     .setExpirationTime("30d")
     .sign(getSecret());
-  cookies().set(COOKIE_NAME, token, {
+  return serializeCookie(COOKIE_NAME, token, {
     httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: "Lax",
+    secure: shouldUseSecureCookie(),
     path: "/",
     maxAge: 60 * 60 * 24 * 30,
   });
 }
 
-export function destroySession() {
-  cookies().set(COOKIE_NAME, "", { httpOnly: true, path: "/", maxAge: 0 });
+export function destroySession(): string {
+  return serializeCookie(COOKIE_NAME, "", {
+    httpOnly: true,
+    sameSite: "Lax",
+    secure: shouldUseSecureCookie(),
+    path: "/",
+    maxAge: 0,
+  });
 }
 
 export type Session = { sub: string; uid: number; role: Role };

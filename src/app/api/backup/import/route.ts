@@ -47,7 +47,7 @@ const hostSchema = z.object({
 });
 
 const schema = z.object({
-  kind: z.literal("server-hub-backup").optional(),
+  kind: z.literal("server-nav-backup").optional(),
   version: z.number().optional(),
   mode: z.enum(["replace", "merge"]).default("replace"),
   settings: z.record(z.string()).optional(),

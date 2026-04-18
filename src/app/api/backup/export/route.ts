@@ -18,7 +18,7 @@ export async function GET() {
   const settings = getSettings(db);
 
   const payload = {
-    kind: "server-hub-backup",
+    kind: "server-nav-backup",
     version: 2,
     exportedAt: new Date().toISOString(),
     settings,
@@ -56,7 +56,7 @@ export async function GET() {
     })),
   };
 
-  const filename = `server-hub-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const filename = `server-nav-backup-${new Date().toISOString().slice(0, 10)}.json`;
   return new NextResponse(JSON.stringify(payload, null, 2), {
     status: 200,
     headers: {

@@ -8,7 +8,7 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:
 
 const VERSION = "v1";
 const PREFIX = `enc:${VERSION}:`;
-const SALT = Buffer.from("server-hub-field-v1", "utf8");
+const SALT = Buffer.from("server-nav-field-v1", "utf8");
 
 let _key: Buffer | null = null;
 function getKey(): Buffer {

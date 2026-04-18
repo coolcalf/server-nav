@@ -44,7 +44,7 @@ export function AdminClient() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `server-hub-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `server-nav-backup-${new Date().toISOString().slice(0, 10)}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -547,7 +547,7 @@ function ImportDialog({ onClose, onDone }: { onClose: () => void; onDone: () => 
             </div>
             <div>
               <label className="label">或直接粘贴 JSON</label>
-              <textarea className="input font-mono text-xs" rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder='{"kind":"server-hub-backup", ...}' />
+              <textarea className="input font-mono text-xs" rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder='{"kind":"server-nav-backup", ...}' />
             </div>
             <div>
               <label className="label">导入模式</label>

@@ -1,4 +1,4 @@
-# Server Hub · 自托管服务导航 + 健康监控 + 主机监控
+# Server Nav · 自托管服务导航 + 健康监控 + 主机监控
 
 一个轻量、现代、深浅自适应的自托管"服务首页"。一个站点囊括三件事：
 
@@ -46,50 +46,105 @@ npm start
 仓库自带 `Dockerfile`（multi-stage、standalone 输出、SQLite 原生模块）+ `docker-compose.yml`，包含 **可选的 `node_exporter` sidecar**：
 
 ```bash
-# 改一下 docker-compose.yml 里的密码与 AUTH_SECRET
+# 先准备环境变量
+cp .env.example .env
+# 改 ADMIN_PASSWORD / AUTH_SECRET；如果要换对外端口，改 HOST_PORT；必要时把 INSTALL_BUILD_DEPS 改成 true
+# 直接 HTTP 访问时保持 COOKIE_SECURE=false；放到 HTTPS 反代后改成 true
+vim .env
 docker compose up -d --build
-# 浏览器打开 http://<服务器 IP>:3000
+# 浏览器打开 http://<服务器 IP>:HOST_PORT
 ```
 
-- 数据落 `./data/app.db`，可直接 `cp` 走备份。
+- 默认使用 Docker named volume `server_nav_data` 持久化数据库，避免宿主机目录权限导致 SQLite 无法写入。
+- 如果你想把数据库直接落到宿主机目录，使用 `docker-compose.bind.yml` 覆盖默认 volume：`docker compose -f docker-compose.yml -f docker-compose.bind.yml up -d --build`。
 - `node_exporter` 用 `network_mode: host`，跑起来后在面板里 **/hosts → 新增主机** 填 `http://<宿主机 IP>:9100/metrics` 即可监控宿主机。不需要它就把那段删掉。
+- 默认使用 `better-sqlite3` 的预编译二进制，构建通常不需要额外系统依赖。
+
+### Docker 数据备份
+
+默认部署使用 named volume 时，可以这样把数据库导出到当前目录：
+
+```bash
+docker run --rm -v server_nav_data:/from -v "$PWD":/to alpine sh -c 'cp /from/app.db /to/app.db'
+```
+
+如果你启用了 `docker-compose.bind.yml`，数据库默认就在宿主机 `./data/app.db`。
+
+### Docker 构建慢或失败时
+
+先看详细构建日志：
+
+```bash
+docker compose build --progress=plain
+```
+
+如果失败点在 `better-sqlite3`，通常是当前机器架构或网络导致拿不到预编译包。此时把 `.env` 里的 `INSTALL_BUILD_DEPS=true`，再重新构建：
+
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
+常见触发场景：
+
+- `arm64` / `aarch64` 机器
+- 服务器访问 npm 预编译资源不稳定
+- 某些代理/防火墙拦截二进制下载
 
 ### 反向代理（推荐 HTTPS）
 
 随便用 Nginx / Caddy 反代到 `:3000`：
 
 ```caddyfile
-hub.example.com {
-    reverse_proxy 127.0.0.1:3000
+server {
+    listen 80;
+    # server_name nav.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
 }
 ```
 
-> 反代是 HTTPS、后端是 HTTP 时一切正常。代码在 `NODE_ENV=production` 自动给 cookie 加 `Secure`。
+> 反代是 HTTPS、后端是 HTTP 时一切正常。此时请把 `.env` 里的 `COOKIE_SECURE=true`，让登录 cookie 带上 `Secure`。
 
 ---
 
 ## Ubuntu + systemd 部署（不用 Docker）
 
 ```bash
-git clone <your-repo> /opt/server-hub
-cd /opt/server-hub
+git clone <your-repo> /opt/server-nav
+cd /opt/server-nav
 cp .env.example .env && vim .env       # 改密码 + AUTH_SECRET
 npm ci
 npm run build
 ```
 
-`/etc/systemd/system/server-hub.service`：
+`/etc/systemd/system/server-nav.service`：
 
 ```ini
 [Unit]
-Description=Server Hub
+Description=Server Nav
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/server-hub
-EnvironmentFile=/opt/server-hub/.env
-ExecStart=/usr/bin/node node_modules/next/dist/bin/next start -p 3000
+WorkingDirectory=/opt/server-nav
+EnvironmentFile=/opt/server-nav/.env
+ExecStart=/usr/bin/node node_modules/next/dist/bin/next start -p 8080
 Restart=always
 User=www-data
 
@@ -99,10 +154,10 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now server-hub
+sudo systemctl enable --now server-nav
 ```
 
-> 系统依赖：编译 `better-sqlite3` 需要 `apt install -y build-essential python3`。
+> 系统依赖：编译 `better-sqlite3` 需要 `apt install -y build-essential python3`。Docker 默认优先走预编译二进制；只有拿不到预编译包时，才需要把 `.env` 里的 `INSTALL_BUILD_DEPS` 改成 `true` 后重建。
 
 ---
 
@@ -113,7 +168,8 @@ sudo systemctl enable --now server-hub
 | `ADMIN_USERNAME` | `admin` | 初次启动创建的管理员用户名 |
 | `ADMIN_PASSWORD` | `admin123` | 初始密码（请务必改） |
 | `AUTH_SECRET` | _(必改)_ | JWT 签名密钥，`openssl rand -base64 48` 生成 |
-| `DB_PATH` | `./data/app.db` | SQLite 文件位置 |
+| `COOKIE_SECURE` | `false` | 是否给登录 cookie 加 `Secure`；直接 HTTP 访问用 `false`，HTTPS 反代后改为 `true` |
+| `DB_PATH` | `/data/app.db` | SQLite 文件位置（Docker 默认） |
 | `HEALTH_INTERVAL_MS` | `30000` | 服务巡检周期 |
 | `HEALTH_TIMEOUT_MS` | `5000` | 单次服务探测超时 |
 | `HOST_INTERVAL_MS` | `30000` | 主机巡检周期 |
@@ -166,9 +222,9 @@ sudo systemctl enable --now server-hub
 - **跨分类拖拽**：抓住服务前面的 `≡` 拖到任意分类（包括空分类）
 - **批量导入 URL**：粘贴一堆 URL 一键建卡
   ```
-  https://grafana.local:3000
-  Grafana | https://grafana.local:3000
-  Grafana | https://grafana.local:3000 | 监控
+  https://grafana.local:8080
+  Grafana | https://grafana.local:8080
+  Grafana | https://grafana.local:8080 | 监控
   ```
 - **JSON 导出 / 导入**：完整备份和迁移（含 settings、分类、服务**和主机**，包括阈值、告警开关、Exporter 鉴权头等全部字段）。导入支持 `replace` / `merge` 两种模式；备份 JSON 中的 `credentials` 字段会**解密后**导出（明文，方便跨实例迁移）、导入时再加密落库
 - **修改密码** + 默认密码风险提示
@@ -212,8 +268,7 @@ EOF
 sudo systemctl daemon-reload && sudo systemctl enable --now node_exporter
 
 # 允许 9100 端口
-sudo ufw allow 9100/tcp
-sudo ufw reload
+sudo ufw allow 9100/tcp && sudo ufw reload
 ```
 
 或 docker 一行：
@@ -424,13 +479,21 @@ data/app.db                # SQLite 数据
 停掉服务 → 删 `data/app.db` 里的 `users` 表（或整个文件）→ 重启时按 `.env` 重建。
 
 **HTTP 反代下 cookie 不工作？**
-代码只在 `NODE_ENV=production` 加 `Secure`。生产请务必走 HTTPS（反代终结即可）。
+如果站点已经放到 HTTPS 反代后面，请把 `.env` 里的 `COOKIE_SECURE=true` 并重启容器。直接用 `http://IP:端口` 访问时应保持 `COOKIE_SECURE=false`。
 
 **`better-sqlite3` 安装失败？**
-Linux 需要 `apt install -y build-essential python3`；Docker 已内置。
+裸机 Linux 需要 `apt install -y build-essential python3`；Docker 默认不装编译链，只有预编译包不可用时才需要把 `.env` 里的 `INSTALL_BUILD_DEPS=true` 后重建：
+
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
 
 **Windows 主机的 CPU 始终是 0 / 异常？**
 首次抓取没有差值，需要等第二轮（`HOST_INTERVAL_MS` 默认 30s）。"测试连接"按钮内置等待并连抓两次。
+
+**Docker 下 SQLite 无法打开数据库文件？**
+默认 `docker-compose.yml` 已改为 named volume，通常不会再碰到宿主机目录权限问题。如果你使用了 `docker-compose.bind.yml`，请确保宿主机 `./data` 对容器用户可写，例如：`sudo chown -R 1001:1001 ./data`。
 
 **抓取不到磁盘？**
 - node_exporter 默认排除了 tmpfs/proc/sys 等伪文件系统，本项目又叠加了一层过滤
@@ -445,7 +508,7 @@ Linux 需要 `apt install -y build-essential python3`；Docker 已内置。
 
 - **务必修改** `.env` 里的 `ADMIN_PASSWORD`、`AUTH_SECRET`
 - 公开互联网暴露请走 HTTPS（Cloudflare、Nginx + Let's Encrypt、Caddy 任选）
-- 凭据字段 `credentials` 在数据库中使用 **AES-256-GCM 加密**（密钥由 `AUTH_SECRET` 派生，首次启动会自动把已有明文加密升级）。注意：**`AUTH_SECRET` 丢失将无法解密旧 credentials**，请务必备份。SQLite 文件仍建议 `chmod 600 data/app.db`
+- 凭据字段 `credentials` 在数据库中使用 **AES-256-GCM 加密**（密钥由 `AUTH_SECRET` 派生，首次启动会自动把已有明文加密升级）。注意：**`AUTH_SECRET` 丢失将无法解密旧 credentials**，请务必备份。若使用 bind mount 持久化 SQLite 文件，仍建议对宿主机数据库文件收紧权限。
 - 登录接口内置速率限制：同一 `IP + username` 连续 `LOGIN_MAX_FAILS` 次错密码会锁定 `LOGIN_LOCK_MS` 毫秒（默认 5 次 / 15 分钟），返回 `429`
 - 主机的 `auth_header` 字段只在已登录状态下返回；未登录的公开 API 响应会剥掉它
 

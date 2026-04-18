@@ -45,6 +45,8 @@ export async function POST(req: Request) {
 
   loginRateClear(key);
   const role = row.role === "viewer" ? "viewer" : "admin";
-  await createSession({ sub: row.username, uid: row.id, role });
-  return NextResponse.json({ ok: true, username: row.username, role });
+  const setCookie = await createSession({ sub: row.username, uid: row.id, role });
+  const res = NextResponse.json({ ok: true, username: row.username, role });
+  res.headers.set("Set-Cookie", setCookie);
+  return res;
 }

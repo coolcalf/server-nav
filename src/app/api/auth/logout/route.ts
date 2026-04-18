@@ -4,6 +4,8 @@ import { destroySession } from "@/lib/auth";
 export const runtime = "nodejs";
 
 export async function POST() {
-  destroySession();
-  return NextResponse.json({ ok: true });
+  const setCookie = destroySession();
+  const res = NextResponse.json({ ok: true });
+  res.headers.set("Set-Cookie", setCookie);
+  return res;
 }
