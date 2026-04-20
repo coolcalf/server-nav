@@ -1441,7 +1441,25 @@ function FederationDialog({ onClose }: { onClose: () => void }) {
 
   function copyKey() {
     if (!createdKey) return;
-    navigator.clipboard.writeText(createdKey).then(() => toast.success("已复制到剪贴板")).catch(() => {});
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(createdKey).then(() => toast.success("已复制到剪贴板")).catch(fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
+    function fallbackCopy() {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = createdKey!;
+        ta.style.cssText = "position:fixed;left:-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        toast.success("已复制到剪贴板");
+      } catch {
+        toast.error("复制失败，请手动选中密钥复制");
+      }
+    }
   }
 
   const mode = status?.mode ?? "standalone";

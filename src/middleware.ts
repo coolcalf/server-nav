@@ -60,8 +60,44 @@ const AUTH_PATHS = [
 // Web 页面路径（API-only 模式时拦截）
 const WEB_PAGE_PREFIXES = ["/login", "/admin", "/hosts"];
 
+/* ── CORS 配置（仅对 /api/mobile/* 生效） ──
+   MOBILE_CORS_ORIGINS 支持：
+     - 逗号分隔的白名单：https://app.example.com,https://m.example.com
+     - "*"：允许任意源（不支持携带凭证，但移动端使用 Bearer token 不需要 cookie）
+   默认 "*"，方便局域网/自部署场景直接跑起来。
+*/
+const MOBILE_CORS_ORIGINS = (process.env.MOBILE_CORS_ORIGINS ?? "*").trim();
+const MOBILE_CORS_LIST = MOBILE_CORS_ORIGINS === "*"
+  ? null
+  : MOBILE_CORS_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean);
+
+function resolveCorsOrigin(reqOrigin: string | null): string | null {
+  if (!reqOrigin) return null;
+  if (MOBILE_CORS_LIST === null) return "*";
+  return MOBILE_CORS_LIST.includes(reqOrigin) ? reqOrigin : null;
+}
+
+function applyCorsHeaders(res: NextResponse, origin: string) {
+  res.headers.set("Access-Control-Allow-Origin", origin);
+  res.headers.set("Vary", "Origin");
+  res.headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.headers.set("Access-Control-Allow-Headers", "authorization,content-type");
+  res.headers.set("Access-Control-Max-Age", "600");
+}
+
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  // ── CORS 预检 / 响应注入（/api/mobile/*） ──
+  const isMobileApi = pathname.startsWith("/api/mobile/");
+  const reqOrigin = req.headers.get("origin");
+  const corsOrigin = isMobileApi ? resolveCorsOrigin(reqOrigin) : null;
+
+  if (isMobileApi && req.method === "OPTIONS") {
+    const res = new NextResponse(null, { status: 204 });
+    if (corsOrigin) applyCorsHeaders(res, corsOrigin);
+    return res;
+  }
 
   // ── API-only 模式：拦截页面请求 ──
   if (API_ONLY) {
@@ -111,6 +147,8 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith("/api/")) {
     res.headers.set("Cache-Control", "no-store, max-age=0");
   }
+  // ── CORS 响应头注入 ──
+  if (corsOrigin) applyCorsHeaders(res, corsOrigin);
   return res;
 }
 

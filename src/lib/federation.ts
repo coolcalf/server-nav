@@ -316,12 +316,15 @@ export function ensureAgentPush() {
   if (st.started) return;
   st.started = true;
   const interval = Number(process.env.AGENT_PUSH_INTERVAL_MS || 30_000);
-  // 首次延迟 5 秒等本地监控先跑一轮
-  setTimeout(() => {
+  // 首次延迟 8 秒，等本地 host-monitor / health-monitor 完成首轮采集
+  // 然后立即推送一次，之后按固定间隔定时推送
+  const startDelay = Number(process.env.AGENT_PUSH_START_DELAY_MS || 8_000);
+  const tid = setTimeout(() => {
     void pushOnce().catch(() => {});
     st.timer = setInterval(() => { void pushOnce().catch(() => {}); }, interval);
     if (st.timer && typeof st.timer.unref === "function") st.timer.unref();
-  }, 5_000);
+  }, startDelay);
+  if (typeof tid.unref === "function") tid.unref();
 }
 
 /** 获取 agent 推送状态（前端展示用） */
