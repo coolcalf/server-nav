@@ -11,7 +11,7 @@ FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_TELEMETRY_DISABLED=1 DB_PATH=/dev/null
 RUN --mount=type=cache,target=/app/.next/cache npm run build
 
 FROM node:20-bookworm-slim AS runner
@@ -22,6 +22,5 @@ COPY --from=builder --chown=nodeusr:nodeusr /app/.next/standalone ./
 COPY --from=builder --chown=nodeusr:nodeusr /app/.next/static ./.next/static
 # better-sqlite3 原生模块
 COPY --from=builder --chown=nodeusr:nodeusr /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
-VOLUME ["/data"]
 EXPOSE 3000
 CMD ["sh", "-c", "mkdir -p /data && chown -R nodeusr:nodeusr /data && exec su -s /bin/sh nodeusr -c 'node server.js'"]

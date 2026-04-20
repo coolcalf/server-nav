@@ -488,7 +488,7 @@ export function queryHostHistory(hostId: number, range: HistoryRange): Array<{ a
 export async function probeOnce(url: string, type: "auto" | "node" | "windows" = "auto", authHeader: string | null = null): Promise<HostMetrics> {
   // 用 -1 临时 id 防止污染真正的 prevCpu / prevNet
   const fakeHost: Host = {
-    id: -1, name: "probe", exporter_url: url, exporter_type: type,
+    id: -1, group_id: null, name: "probe", exporter_url: url, exporter_type: type,
     enabled: 1, is_private: 0, alerts_enabled: 0,
     cpu_threshold: 90, mem_threshold: 90, disk_threshold: 90,
     description: null, auth_header: authHeader, sort_order: 0, created_at: "", updated_at: "",

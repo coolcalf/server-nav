@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { readSession, requireAdmin } from "@/lib/auth";
+import { isMaster, getAllSnapshots, getPublicVisibleAgentIds } from "@/lib/federation";
 import type { Host } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -14,7 +15,20 @@ export async function GET() {
   const filtered = session ? rows : rows.filter((h) => !h.is_private);
   // 未登录时隐藏 auth_header（敏感字段）
   const visible = session ? filtered : filtered.map((h) => ({ ...h, auth_header: null }));
-  return NextResponse.json({ hosts: visible, authed: !!session });
+  const groups = db.prepare("SELECT * FROM host_groups ORDER BY sort_order, id").all();
+  const res: Record<string, unknown> = { hosts: visible, groups, authed: !!session };
+  if (isMaster()) {
+    const publicIds = session ? null : getPublicVisibleAgentIds();
+    res.remoteAgents = getAllSnapshots()
+      .filter((s) => session || publicIds!.has(s.agentId))
+      .map((s) => ({
+        agentId: s.agentId,
+        agentName: s.agentName,
+        receivedAt: s.receivedAt,
+        hosts: session ? s.hosts : s.hosts.filter((h) => !h.is_private),
+      }));
+  }
+  return NextResponse.json(res);
 }
 
 const createSchema = z.object({
@@ -29,6 +43,7 @@ const createSchema = z.object({
   disk_threshold: z.number().int().min(1).max(100).optional(),
   description: z.string().max(300).nullable().optional(),
   auth_header: z.string().max(500).nullable().optional(),
+  group_id: z.number().int().nullable().optional(),
 });
 
 export async function POST(req: Request) {
@@ -40,9 +55,9 @@ export async function POST(req: Request) {
   const max = (db.prepare("SELECT COALESCE(MAX(sort_order), -1) AS m FROM hosts").get() as { m: number }).m;
   const info = db.prepare(`
     INSERT INTO hosts (name, exporter_url, exporter_type, enabled, is_private, alerts_enabled,
-                       cpu_threshold, mem_threshold, disk_threshold, description, auth_header, sort_order, updated_at)
+                       cpu_threshold, mem_threshold, disk_threshold, description, auth_header, group_id, sort_order, updated_at)
     VALUES (@name, @exporter_url, @exporter_type, @enabled, @is_private, @alerts_enabled,
-            @cpu_threshold, @mem_threshold, @disk_threshold, @description, @auth_header, @sort_order, datetime('now'))
+            @cpu_threshold, @mem_threshold, @disk_threshold, @description, @auth_header, @group_id, @sort_order, datetime('now'))
   `).run({
     name: parsed.data.name,
     exporter_url: parsed.data.exporter_url,
@@ -55,6 +70,7 @@ export async function POST(req: Request) {
     disk_threshold: parsed.data.disk_threshold ?? 90,
     description: parsed.data.description ?? null,
     auth_header: parsed.data.auth_header ?? null,
+    group_id: parsed.data.group_id ?? null,
     sort_order: max + 1,
   });
   const created = db.prepare("SELECT * FROM hosts WHERE id = ?").get(Number(info.lastInsertRowid));

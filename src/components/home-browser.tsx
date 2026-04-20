@@ -7,23 +7,36 @@ import type { Service, Category } from "@/lib/types";
 type Statuses = Record<number, NonNullable<CardStatus>>;
 type Histories = Record<number, (number | null)[]>;
 
+export type RemoteServiceAgent = {
+  agentId: string;
+  agentName: string;
+  receivedAt: number;
+  services: Service[];
+  categories: Category[];
+  statuses: Record<string, NonNullable<CardStatus>>;
+  history: Record<string, (number | null)[]>;
+};
+
 export function HomeBrowser({
   services,
   categories,
   authed,
   initialStatuses,
   initialHistory,
+  remoteAgents: initialRemote,
 }: {
   services: Service[];
   categories: Category[];
   authed: boolean;
   initialStatuses: Statuses;
   initialHistory: Histories;
+  remoteAgents?: RemoteServiceAgent[];
 }) {
   const [q, setQ] = useState("");
   const [statuses, setStatuses] = useState<Statuses>(initialStatuses ?? {});
   const [history, setHistory] = useState<Histories>(initialHistory ?? {});
   const [refreshing, setRefreshing] = useState(false);
+  const [remote, setRemote] = useState<RemoteServiceAgent[]>(initialRemote ?? []);
 
   // 定期刷新状态（30s）
   useEffect(() => {
@@ -35,6 +48,7 @@ export function HomeBrowser({
         if (cancelled) return;
         if (j?.statuses) setStatuses(j.statuses);
         if (j?.history) setHistory(j.history);
+        if (j?.remoteAgents) setRemote(j.remoteAgents);
       } catch { /* ignore */ }
     };
     const timer = setInterval(tick, 30_000);
@@ -48,6 +62,7 @@ export function HomeBrowser({
       const j = await r.json();
       if (j?.statuses) setStatuses(j.statuses);
       if (j?.history) setHistory(j.history);
+      if (j?.remoteAgents) setRemote(j.remoteAgents);
     } finally {
       setRefreshing(false);
     }
@@ -155,13 +170,88 @@ export function HomeBrowser({
             </Group>
           );
         })()}
-        {filtered.length === 0 ? (
+
+        {remote.map((agent) => (
+          <RemoteAgentServices key={agent.agentId} agent={agent} needle={needle} />
+        ))}
+
+        {filtered.length === 0 && remote.length === 0 ? (
           <div className="card-surface p-10 text-center text-sm text-muted-foreground">
-            {needle ? `没有匹配 “${q}” 的服务` : "还没有任何服务，去 /admin 添加第一条吧。"}
+            {needle ? `没有匹配 "${q}" 的服务` : "还没有任何服务，去 /admin 添加第一条吧。"}
           </div>
         ) : null}
       </div>
     </>
+  );
+}
+
+/* -------------------- 远程 Agent 服务分组 -------------------- */
+
+function RemoteAgentServices({ agent, needle }: { agent: RemoteServiceAgent; needle: string }) {
+  const services = needle
+    ? agent.services.filter((s) => {
+        const hay = [s.name, s.url, s.description ?? "", s.check_target ?? ""].join(" ").toLowerCase();
+        return hay.includes(needle);
+      })
+    : agent.services;
+
+  if (services.length === 0 && needle) return null;
+
+  const catMap = new Map(agent.categories.map((c) => [c.id, c]));
+  const grouped = new Map<number | "none", Service[]>();
+  for (const s of services) {
+    const k = s.category_id ?? "none";
+    if (!grouped.has(k)) grouped.set(k, []);
+    grouped.get(k)!.push(s);
+  }
+
+  const stale = agent.receivedAt && (Date.now() - agent.receivedAt > 120_000);
+
+  return (
+    <section className="border-t border-border pt-6">
+      <div className="flex items-center gap-2 mb-4">
+        <span className="bg-accent/60 text-accent-foreground px-2 py-0.5 rounded text-xs font-medium">{agent.agentName}</span>
+        <span className="text-xs text-muted-foreground">{services.length} 项服务</span>
+        {stale && <span className="text-[10px] text-amber-500">· 数据可能过期</span>}
+      </div>
+      {agent.categories.map((cat) => {
+        const list = grouped.get(cat.id) ?? [];
+        if (list.length === 0) return null;
+        return (
+          <Group key={`${agent.agentId}_${cat.id}`} title={cat.name} count={list.length}>
+            {list.map((s) => (
+              <ServiceCard
+                key={`${agent.agentId}_${s.id}`}
+                service={s}
+                authed={false}
+                status={agent.statuses[String(s.id)] ?? null}
+                history={agent.history[String(s.id)]}
+              />
+            ))}
+          </Group>
+        );
+      })}
+      {(() => {
+        const list = grouped.get("none") ?? [];
+        if (list.length === 0) return null;
+        return (
+          <Group key={`${agent.agentId}_none`} title="未分类" count={list.length}>
+            {list.map((s) => (
+              <ServiceCard
+                key={`${agent.agentId}_${s.id}`}
+                service={s}
+                authed={false}
+                status={agent.statuses[String(s.id)] ?? null}
+                history={agent.history[String(s.id)]}
+              />
+            ))}
+          </Group>
+        );
+      })()}
+      {services.length === 0 && !needle && (
+        <div className="card-surface p-4 text-center text-xs text-muted-foreground">该节点暂无服务数据</div>
+      )}
+    </section>
   );
 }
 

@@ -3,6 +3,7 @@ import { readSession } from "@/lib/auth";
 import { NavBar } from "@/components/nav-bar";
 import { HomeBrowser } from "@/components/home-browser";
 import { ensureHealthMonitor, getAllStatuses, getAllHistory } from "@/lib/health-monitor";
+import { ensureAgentPush, isMaster, getAllSnapshots, getAgentPublicVisibleMap, getAllItemOverrides, isItemPublic } from "@/lib/federation";
 import type { Service, Category } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -22,8 +23,48 @@ export default async function HomePage() {
 
   // 启动后台监控并读取当前缓存（首屏就带状态渲染）
   ensureHealthMonitor();
+  ensureAgentPush();
   const statuses = getAllStatuses();
   const history = getAllHistory();
+
+  const remoteAgents = isMaster()
+    ? (() => {
+        const snapshots = getAllSnapshots();
+        if (authed) {
+          return snapshots.map((s) => ({
+            agentId: s.agentId,
+            agentName: s.agentName,
+            receivedAt: s.receivedAt,
+            services: s.services,
+            categories: s.categories,
+            statuses: s.serviceStatuses,
+            history: s.serviceHistory,
+          }));
+        }
+        // 未登录：按 agent 默认 + 单项覆盖 过滤
+        const agentMap = getAgentPublicVisibleMap();
+        const allOverrides = getAllItemOverrides();
+        return snapshots
+          .filter((s) => agentMap.has(s.agentId)) // 仅 enabled
+          .map((s) => {
+            const agentPub = agentMap.get(s.agentId) ?? false;
+            const ov = allOverrides.get(s.agentId) ?? new Map();
+            const filteredServices = s.services.filter(
+              (svc) => isItemPublic(agentPub, ov, "service", svc.id)
+            );
+            return {
+              agentId: s.agentId,
+              agentName: s.agentName,
+              receivedAt: s.receivedAt,
+              services: filteredServices,
+              categories: s.categories,
+              statuses: s.serviceStatuses,
+              history: s.serviceHistory,
+            };
+          })
+          .filter((a) => a.services.length > 0);
+      })()
+    : undefined;
 
   return (
     <>
@@ -50,6 +91,7 @@ export default async function HomePage() {
             authed={authed}
             initialStatuses={statuses}
             initialHistory={history}
+            remoteAgents={remoteAgents}
           />
         </section>
       </main>

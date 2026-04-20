@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, GripVertical, FolderPlus, Lock, Globe, Save, X, Settings as SettingsIcon, Download, Upload, KeyRound, AlertTriangle, ListPlus, Send, Bell, Trash } from "lucide-react";
+import { Plus, Pencil, Trash2, GripVertical, FolderPlus, Lock, Globe, Save, X, Settings as SettingsIcon, Download, Upload, KeyRound, AlertTriangle, ListPlus, Send, Bell, Trash, Network, Copy, Eye, EyeOff, Users, Smartphone, Shield, ChevronLeft, ChevronRight, Monitor, LayoutGrid } from "lucide-react";
 import {
   DndContext, closestCenter, PointerSensor, useSensor, useSensors,
   DragEndEvent, DragOverEvent, DragStartEvent, DragOverlay, useDroppable,
@@ -27,6 +27,8 @@ export function AdminClient() {
   const [pwdOpen, setPwdOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [federationOpen, setFederationOpen] = useState(false);
+  const [usersOpen, setUsersOpen] = useState(false);
   const [mustChange, setMustChange] = useState(false);
 
   useEffect(() => {
@@ -215,6 +217,12 @@ export function AdminClient() {
           <button className="btn btn-outline" onClick={() => setBulkOpen(true)}>
             <ListPlus size={16} /> 批量导入
           </button>
+          <button className="btn btn-outline" onClick={() => setUsersOpen(true)}>
+            <Users size={16} /> 用户
+          </button>
+          <button className="btn btn-outline" onClick={() => setFederationOpen(true)}>
+            <Network size={16} /> 联邦
+          </button>
           <button className="btn btn-primary" onClick={() => setEditing({})}>
             <Plus size={16} /> 新增服务
           </button>
@@ -317,6 +325,14 @@ export function AdminClient() {
           onClose={() => setBulkOpen(false)}
           onDone={() => { setBulkOpen(false); reload(); }}
         />
+      ) : null}
+
+      {federationOpen ? (
+        <FederationDialog onClose={() => setFederationOpen(false)} />
+      ) : null}
+
+      {usersOpen ? (
+        <UsersDialog onClose={() => setUsersOpen(false)} />
       ) : null}
     </div>
   );
@@ -1167,6 +1183,766 @@ function CategoryRow({ cat, onRename, onDelete }: { cat: Category; onRename: (n:
         <button className="btn btn-ghost" onClick={() => setEditing(true)}><Pencil size={14} /></button>
       )}
       <button className="btn btn-ghost text-destructive" onClick={onDelete}><Trash2 size={14} /></button>
+    </div>
+  );
+}
+
+/* -------------------- 联邦：类型定义 -------------------- */
+
+type AgentInfo = {
+  id: string;
+  name: string;
+  enabled: number;
+  public_visible: number;
+  last_seen_at: number | null;
+  sort_order: number;
+  created_at: string;
+};
+
+type FedStatus = {
+  mode: string;
+  masterUrl?: string;
+  agentName?: string;
+  lastPushAt?: number;
+  lastError?: string | null;
+  pushing?: boolean;
+  agents?: Array<{ id: string; name: string; receivedAt: number; hostCount: number; serviceCount: number }>;
+};
+
+/* -------------------- 节点单项可见性面板 -------------------- */
+
+type VisOverride = { item_type: string; remote_id: number; public_visible: boolean };
+type VisItem = { id: number; name: string };
+
+function AgentItemVisibilityPanel({ agent, onBack, onClose }: { agent: AgentInfo; onBack: () => void; onClose: () => void }) {
+  const [hosts, setHosts] = useState<VisItem[]>([]);
+  const [services, setServices] = useState<VisItem[]>([]);
+  const [overrides, setOverrides] = useState<Map<string, boolean>>(new Map());
+  const [loading, setLoading] = useState(true);
+
+  async function loadVis() {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/federation/agents/visibility?agent_id=${agent.id}`, { cache: "no-store" });
+      const j = await r.json();
+      setHosts(j.hosts ?? []);
+      setServices(j.services ?? []);
+      const m = new Map<string, boolean>();
+      for (const o of (j.overrides ?? []) as VisOverride[]) {
+        m.set(`${o.item_type}:${o.remote_id}`, o.public_visible);
+      }
+      setOverrides(m);
+    } catch { toast.error("加载失败"); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { loadVis(); }, [agent.id]);
+
+  const agentDefault = !!agent.public_visible;
+
+  function getEffective(type: string, id: number): boolean {
+    const key = `${type}:${id}`;
+    const ov = overrides.get(key);
+    return ov !== undefined ? ov : agentDefault;
+  }
+
+  function hasOverride(type: string, id: number): boolean {
+    return overrides.has(`${type}:${id}`);
+  }
+
+  async function toggleItem(type: "host" | "service", id: number) {
+    const current = getEffective(type, id);
+    const next = !current;
+    // 如果切换后与 agent 默认一致，删除 override；否则设置 override
+    const matchesDefault = next === agentDefault;
+    const r = await fetch("/api/federation/agents/visibility", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent_id: agent.id,
+        item_type: type,
+        remote_id: id,
+        public_visible: matchesDefault ? null : next,
+      }),
+    });
+    if (r.ok) {
+      setOverrides((prev) => {
+        const m = new Map(prev);
+        const key = `${type}:${id}`;
+        if (matchesDefault) m.delete(key);
+        else m.set(key, next);
+        return m;
+      });
+    } else { toast.error("操作失败"); }
+  }
+
+  function renderToggle(type: "host" | "service", item: VisItem) {
+    const pub = getEffective(type, item.id);
+    const isOverridden = hasOverride(type, item.id);
+    return (
+      <div key={`${type}:${item.id}`} className="flex items-center gap-2 py-1.5 px-1">
+        <button
+          onClick={() => toggleItem(type, item.id)}
+          className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors cursor-pointer ${pub ? "bg-emerald-500" : "bg-muted-foreground/30"}`}
+          title={pub
+            ? `当前：公开可见${isOverridden ? "（已单独设置）" : "（跟随节点默认）"}，点击切换为仅登录`
+            : `当前：仅登录可见${isOverridden ? "（已单独设置）" : "（跟随节点默认）"}，点击切换为公开`}
+        >
+          <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${pub ? "translate-x-4" : "translate-x-0"}`} />
+        </button>
+        <span className="text-sm truncate flex-1">{item.name}</span>
+        {isOverridden && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0" title="已单独设置，不跟随节点默认">
+            已覆盖
+          </span>
+        )}
+        <span className="text-[10px] text-muted-foreground shrink-0">
+          {pub ? <span className="text-emerald-600 dark:text-emerald-400">公开</span> : "登录"}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="modal-mask" onClick={onClose} />
+      <div className="modal-panel">
+        <div className="card-surface w-full max-w-xl p-5 sm:p-6 animate-fade-in max-h-[90vh] overflow-auto">
+          <div className="flex items-center gap-2 mb-4">
+            <button className="btn btn-ghost !h-8 !w-8 !p-0" onClick={onBack}><ChevronLeft size={16} /></button>
+            <h2 className="text-lg font-semibold flex-1 truncate">{agent.name} — 单项可见性</h2>
+            <button className="btn btn-ghost !h-8 !w-8 !p-0" onClick={onClose}><X size={16} /></button>
+          </div>
+
+          <div className="card-surface !bg-muted/40 p-3 mb-4 text-xs text-muted-foreground">
+            <p>节点默认：<strong className={agentDefault ? "text-emerald-600 dark:text-emerald-400" : ""}>{agentDefault ? "公开可见" : "仅登录可见"}</strong>。下方开关可对单个主机/服务单独设置，覆盖节点默认值。</p>
+            <p className="mt-1">标记为 <span className="px-1 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px]">已覆盖</span> 的项不跟随节点默认，切换到与默认一致时自动清除覆盖。</p>
+          </div>
+
+          {loading ? (
+            <div className="text-sm text-muted-foreground py-8 text-center">加载中…</div>
+          ) : (
+            <>
+              {hosts.length > 0 && (
+                <div className="mb-4">
+                  <h3 className="text-sm font-medium mb-2 flex items-center gap-1.5"><Monitor size={14} /> 主机 ({hosts.length})</h3>
+                  <div className="card-surface !p-2 divide-y divide-border">
+                    {hosts.map((h) => renderToggle("host", h))}
+                  </div>
+                </div>
+              )}
+
+              {services.length > 0 && (
+                <div className="mb-4">
+                  <h3 className="text-sm font-medium mb-2 flex items-center gap-1.5"><LayoutGrid size={14} /> 服务 ({services.length})</h3>
+                  <div className="card-surface !p-2 divide-y divide-border">
+                    {services.map((s) => renderToggle("service", s))}
+                  </div>
+                </div>
+              )}
+
+              {hosts.length === 0 && services.length === 0 && (
+                <div className="text-sm text-muted-foreground py-8 text-center">
+                  该节点尚未推送任何数据，等待节点上线后刷新。
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* -------------------- 联邦管理对话框 -------------------- */
+
+function FederationDialog({ onClose }: { onClose: () => void }) {
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [status, setStatus] = useState<FedStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState("");
+  const [createdKey, setCreatedKey] = useState<string | null>(null);
+  const [showKey, setShowKey] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null);
+
+  async function loadData() {
+    setLoading(true);
+    try {
+      const [agentsRes, statusRes] = await Promise.all([
+        fetch("/api/federation/agents", { cache: "no-store" }),
+        fetch("/api/federation/status", { cache: "no-store" }),
+      ]);
+      const aj = await agentsRes.json();
+      const sj = await statusRes.json();
+      setAgents(aj.agents ?? []);
+      setStatus(sj);
+    } catch {
+      toast.error("加载联邦状态失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { loadData(); }, []);
+
+  async function addAgent() {
+    const name = newName.trim();
+    if (!name) return toast.error("请输入节点名称");
+    setAdding(true);
+    try {
+      const r = await fetch("/api/federation/agents", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "创建失败");
+      setCreatedKey(j.key);
+      setShowKey(true);
+      setNewName("");
+      toast.success(`已创建节点「${name}」`);
+      loadData();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function toggleAgent(id: string, enabled: boolean) {
+    const r = await fetch("/api/federation/agents", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, enabled }),
+    });
+    if (r.ok) { loadData(); } else { toast.error("操作失败"); }
+  }
+
+  async function togglePublicVisible(id: string, visible: boolean) {
+    const r = await fetch("/api/federation/agents", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, public_visible: visible }),
+    });
+    if (r.ok) { loadData(); toast.success(visible ? "已设为公开可见" : "已设为仅登录可见"); }
+    else { toast.error("操作失败"); }
+  }
+
+  async function deleteAgent(id: string, name: string) {
+    if (!confirm(`确认删除节点「${name}」？该节点的远程数据将被清除。`)) return;
+    const r = await fetch("/api/federation/agents", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (r.ok) { toast.success("已删除"); loadData(); } else { toast.error("删除失败"); }
+  }
+
+  function copyKey() {
+    if (!createdKey) return;
+    navigator.clipboard.writeText(createdKey).then(() => toast.success("已复制到剪贴板")).catch(() => {});
+  }
+
+  const mode = status?.mode ?? "standalone";
+
+  if (selectedAgent) {
+    return (
+      <AgentItemVisibilityPanel
+        agent={selectedAgent}
+        onBack={() => setSelectedAgent(null)}
+        onClose={onClose}
+      />
+    );
+  }
+
+  return (
+    <>
+      <div className="modal-mask" onClick={onClose} />
+      <div className="modal-panel">
+        <div className="card-surface w-full max-w-xl p-5 sm:p-6 animate-fade-in max-h-[90vh] overflow-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold flex items-center gap-2"><Network size={18} /> 联邦管理</h2>
+            <button className="btn btn-ghost !h-8 !w-8 !p-0" onClick={onClose}><X size={16} /></button>
+          </div>
+
+          {/* 模式状态 */}
+          <div className="card-surface !bg-muted/40 p-3 mb-4 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">当前模式：</span>
+              <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                mode === "master" ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
+                : mode === "agent" ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                : "bg-muted text-muted-foreground"
+              }`}>
+                {mode === "master" ? "主控端 (Master)" : mode === "agent" ? "节点 (Agent)" : "独立运行 (Standalone)"}
+              </span>
+            </div>
+
+            {mode === "agent" && status && (
+              <div className="mt-2 text-xs text-muted-foreground space-y-1">
+                <div>主控端：{status.masterUrl || "未配置"}</div>
+                <div>节点名称：{status.agentName || "未命名"}</div>
+                <div>
+                  上次推送：{status.lastPushAt ? new Date(status.lastPushAt).toLocaleString() : "尚未推送"}
+                  {status.pushing && <span className="text-blue-500 ml-1">推送中…</span>}
+                </div>
+                {status.lastError && <div className="text-rose-500">错误：{status.lastError}</div>}
+              </div>
+            )}
+
+            {mode === "standalone" && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                设置环境变量 <code className="bg-muted px-1 rounded">FEDERATION_MODE=master</code> 将此实例设为主控端，
+                或 <code className="bg-muted px-1 rounded">FEDERATION_MODE=agent</code> 将此实例设为远程节点。
+              </p>
+            )}
+          </div>
+
+          {/* Master: 节点管理 */}
+          {mode === "master" && (
+            <>
+              <h3 className="text-sm font-medium mb-2">注册新节点</h3>
+              <div className="flex gap-2 mb-4">
+                <input
+                  className="input flex-1"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="节点名称，如「广州分公司」"
+                  onKeyDown={(e) => { if (e.key === "Enter") addAgent(); }}
+                />
+                <button className="btn btn-primary" onClick={addAgent} disabled={adding}>
+                  <Plus size={14} /> {adding ? "创建中…" : "创建"}
+                </button>
+              </div>
+
+              {/* 显示刚创建的密钥 */}
+              {createdKey && (
+                <div className="card-surface border-amber-500/40 bg-amber-500/5 p-3 mb-4 text-sm">
+                  <div className="font-medium text-amber-600 dark:text-amber-400 mb-1">请立即保存此密钥（关闭后无法再次查看）</div>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 bg-muted px-2 py-1 rounded text-xs break-all select-all">
+                      {showKey ? createdKey : "•".repeat(40)}
+                    </code>
+                    <button className="btn btn-ghost !h-8 !w-8 !p-0" onClick={() => setShowKey(!showKey)} title={showKey ? "隐藏" : "显示"}>
+                      {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                    <button className="btn btn-ghost !h-8 !w-8 !p-0" onClick={copyKey} title="复制">
+                      <Copy size={14} />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    在远程节点的 <code>.env</code> 中配置：<br />
+                    <code>FEDERATION_MODE=agent</code><br />
+                    <code>MASTER_URL=https://本机地址</code><br />
+                    <code>AGENT_KEY=上面的密钥</code><br />
+                    <code>AGENT_NAME=节点名称</code>
+                  </p>
+                </div>
+              )}
+
+              <h3 className="text-sm font-medium mb-2">已注册节点</h3>
+              {loading ? (
+                <div className="text-sm text-muted-foreground py-4 text-center">加载中…</div>
+              ) : agents.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-4 text-center">暂无节点，在上方注册一个。</div>
+              ) : (
+                <div className="space-y-2">
+                  {agents.map((a) => {
+                    const snap = status?.agents?.find((s) => s.id === a.id);
+                    const lastSeen = a.last_seen_at ? new Date(a.last_seen_at) : null;
+                    const stale = lastSeen && (Date.now() - lastSeen.getTime() > 120_000);
+                    return (
+                      <div key={a.id} className="card-surface !p-3 flex items-center gap-3">
+                        <span className={`dot ${!a.enabled ? "dot-pending" : snap ? "dot-ok" : lastSeen ? (stale ? "dot-bad" : "dot-ok") : "dot-pending"}`} />
+                        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setSelectedAgent(a)} title="点击管理单项可见性">
+                          <div className="font-medium text-sm truncate flex items-center gap-1">{a.name} <ChevronRight size={12} className="text-muted-foreground" /></div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {!a.enabled && <span className="text-amber-500">已停用 · </span>}
+                            {a.public_visible ? <span className="text-emerald-500">公开 · </span> : <span>仅登录 · </span>}
+                            {lastSeen ? (
+                              <>上次报到 {lastSeen.toLocaleString()}{stale && <span className="text-amber-500"> (超时)</span>}</>
+                            ) : "从未报到"}
+                            {snap && <> · {snap.hostCount} 台主机 · {snap.serviceCount} 项服务</>}
+                          </div>
+                        </div>
+                        <button
+                          className={`btn btn-ghost !h-8 !px-2 text-xs ${a.public_visible ? "text-emerald-600" : ""}`}
+                          onClick={() => togglePublicVisible(a.id, !a.public_visible)}
+                          title={a.public_visible ? "点击设为仅登录可见" : "点击设为公开可见（未登录也能看）"}
+                        >
+                          {a.public_visible ? <><Globe size={12} /> 公开</> : <><Lock size={12} /> 登录</>}
+                        </button>
+                        <button
+                          className="btn btn-ghost !h-8 !px-2 text-xs"
+                          onClick={() => toggleAgent(a.id, !a.enabled)}
+                          title={a.enabled ? "停用" : "启用"}
+                        >
+                          {a.enabled ? "停用" : "启用"}
+                        </button>
+                        <button
+                          className="btn btn-ghost !h-8 !w-8 !p-0 hover:!text-rose-500"
+                          onClick={() => deleteAgent(a.id, a.name)}
+                          title="删除"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Agent: 状态显示（已在上方 mode=agent 块展示） */}
+          {mode === "agent" && (
+            <div className="text-xs text-muted-foreground">
+              节点配置通过环境变量管理。如需修改主控端地址或密钥，请编辑 <code>.env</code> 文件并重启服务。
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* -------------------- 用户管理对话框 -------------------- */
+
+type UserInfo = { id: number; username: string; role: "admin" | "viewer"; must_change_password: boolean; created_at: string };
+type HostAccessItem = { id: number; user_id: number; host_id: number | null; group_id: number | null; host_name: string | null; group_name: string | null; created_at: string };
+type TokenItem = { id: number; name: string; last_used_at: number | null; expires_at: number | null; created_at: string };
+
+function UsersDialog({ onClose }: { onClose: () => void }) {
+  const [users, setUsers] = useState<UserInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedUser, setSelectedUser] = useState<UserInfo | null>(null);
+
+  // 创建用户
+  const [newUsername, setNewUsername] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRole, setNewRole] = useState<"admin" | "viewer">("viewer");
+  const [creating, setCreating] = useState(false);
+
+  async function loadUsers() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/users", { cache: "no-store" });
+      const j = await r.json();
+      setUsers(j.users ?? []);
+    } catch { toast.error("加载用户列表失败"); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { loadUsers(); }, []);
+
+  async function createUser() {
+    if (!newUsername.trim() || !newPassword) return;
+    setCreating(true);
+    try {
+      const r = await fetch("/api/users", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: newUsername.trim(), password: newPassword, role: newRole }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "创建失败");
+      toast.success(`已创建用户「${j.user.username}」`);
+      setNewUsername(""); setNewPassword("");
+      loadUsers();
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setCreating(false); }
+  }
+
+  async function deleteUser(u: UserInfo) {
+    if (!confirm(`确认删除用户「${u.username}」？其 Token 和权限配置也会一并删除。`)) return;
+    const r = await fetch(`/api/users/${u.id}`, { method: "DELETE" });
+    if (r.ok) { toast.success("已删除"); if (selectedUser?.id === u.id) setSelectedUser(null); loadUsers(); }
+    else { const j = await r.json().catch(() => ({})); toast.error(j.error || "删除失败"); }
+  }
+
+  async function changeRole(u: UserInfo, role: "admin" | "viewer") {
+    const r = await fetch(`/api/users/${u.id}`, {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role }),
+    });
+    if (r.ok) { toast.success("已更新"); loadUsers(); }
+    else { const j = await r.json().catch(() => ({})); toast.error(j.error || "更新失败"); }
+  }
+
+  if (selectedUser) {
+    return (
+      <>
+        <div className="modal-mask" onClick={onClose} />
+        <div className="modal-panel">
+          <div className="card-surface w-full max-w-2xl p-5 sm:p-6 animate-fade-in max-h-[90vh] overflow-auto">
+            <div className="flex items-center gap-2 mb-4">
+              <button className="btn btn-ghost !h-8 !w-8 !p-0" onClick={() => setSelectedUser(null)}><ChevronLeft size={16} /></button>
+              <h2 className="text-lg font-semibold flex-1">
+                {selectedUser.username}
+                <span className={`ml-2 text-xs px-2 py-0.5 rounded ${selectedUser.role === "admin" ? "bg-blue-500/15 text-blue-600 dark:text-blue-400" : "bg-muted text-muted-foreground"}`}>
+                  {selectedUser.role}
+                </span>
+              </h2>
+              <button className="btn btn-ghost !h-8 !w-8 !p-0" onClick={onClose}><X size={16} /></button>
+            </div>
+
+            <UserHostAccessPanel user={selectedUser} />
+            <UserTokensPanel user={selectedUser} />
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="modal-mask" onClick={onClose} />
+      <div className="modal-panel">
+        <div className="card-surface w-full max-w-xl p-5 sm:p-6 animate-fade-in max-h-[90vh] overflow-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold flex items-center gap-2"><Users size={18} /> 用户管理</h2>
+            <button className="btn btn-ghost !h-8 !w-8 !p-0" onClick={onClose}><X size={16} /></button>
+          </div>
+
+          {/* 创建用户 */}
+          <div className="card-surface !bg-muted/40 p-3 mb-4 space-y-2">
+            <div className="text-xs font-medium">新建用户</div>
+            <form className="flex gap-2 flex-wrap" autoComplete="off" onSubmit={(e) => { e.preventDefault(); createUser(); }}>
+              {/* 诱饵字段：抵御浏览器对 type=password 的强制自动填充 */}
+              <input type="text" name="fakeusernameremembered" autoComplete="username" className="hidden" tabIndex={-1} aria-hidden="true" />
+              <input type="password" name="fakepasswordremembered" autoComplete="new-password" className="hidden" tabIndex={-1} aria-hidden="true" />
+              <input
+                className="input flex-1 min-w-[120px]"
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+                placeholder="用户名"
+                autoComplete="off"
+                name="new-user-name"
+                data-lpignore="true"
+                data-form-type="other"
+              />
+              <input
+                className="input flex-1 min-w-[120px]"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="密码（≥6位）"
+                autoComplete="new-password"
+                name="new-user-password"
+                data-lpignore="true"
+                data-form-type="other"
+              />
+              <select className="input !w-auto" value={newRole} onChange={(e) => setNewRole(e.target.value as "admin" | "viewer")}>
+                <option value="viewer">Viewer</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button type="submit" className="btn btn-primary" disabled={creating || !newUsername.trim() || newPassword.length < 6}>
+                <Plus size={14} /> {creating ? "创建中…" : "创建"}
+              </button>
+            </form>
+          </div>
+
+          {/* 用户列表 */}
+          {loading ? (
+            <p className="text-sm text-muted-foreground text-center py-4">加载中…</p>
+          ) : users.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">暂无用户</p>
+          ) : (
+            <div className="space-y-2">
+              {users.map((u) => (
+                <div key={u.id} className="card-surface !p-3 flex items-center gap-3">
+                  <Shield size={14} className={u.role === "admin" ? "text-blue-500" : "text-muted-foreground"} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm truncate">{u.username}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${u.role === "admin" ? "bg-blue-500/15 text-blue-600 dark:text-blue-400" : "bg-muted text-muted-foreground"}`}>
+                        {u.role}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">创建于 {u.created_at?.split("T")[0] ?? "-"}</div>
+                  </div>
+                  {u.role === "viewer" ? (
+                    <button className="btn btn-ghost !h-8 !px-2 text-xs" onClick={() => setSelectedUser(u)} title="管理权限和 Token">
+                      <Smartphone size={12} /> 权限
+                    </button>
+                  ) : null}
+                  <select
+                    className="input !w-auto !h-8 !text-xs"
+                    value={u.role}
+                    onChange={(e) => changeRole(u, e.target.value as "admin" | "viewer")}
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                  <button className="btn btn-ghost !h-8 !w-8 !p-0 hover:!text-rose-500" onClick={() => deleteUser(u)} title="删除">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4 text-[11px] text-muted-foreground">
+            <strong>Admin</strong>：管理后台 + 全部主机可见。<strong>Viewer</strong>：仅移动端登录，查看被授权的主机。
+            点击 Viewer 用户的「权限」按钮管理其主机访问范围和 API Token。
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ---- 用户主机权限管理 ---- */
+
+function UserHostAccessPanel({ user }: { user: UserInfo }) {
+  const [access, setAccess] = useState<HostAccessItem[]>([]);
+  const [hosts, setHosts] = useState<{ id: number; name: string }[]>([]);
+  const [groups, setGroups] = useState<{ id: number; name: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [addType, setAddType] = useState<"host" | "group">("host");
+  const [addId, setAddId] = useState("");
+
+  async function load() {
+    setLoading(true);
+    try {
+      const [ar, hr] = await Promise.all([
+        fetch(`/api/users/${user.id}/host-access`, { cache: "no-store" }),
+        fetch("/api/hosts", { cache: "no-store" }),
+      ]);
+      const aj = await ar.json();
+      const hj = await hr.json();
+      setAccess(aj.access ?? []);
+      setHosts((hj.hosts ?? []).map((h: { id: number; name: string }) => ({ id: h.id, name: h.name })));
+      setGroups((hj.groups ?? []).map((g: { id: number; name: string }) => ({ id: g.id, name: g.name })));
+    } catch { toast.error("加载权限失败"); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user.id]);
+
+  async function addAccess() {
+    const id = Number(addId);
+    if (!id) return;
+    const body = addType === "host" ? { host_id: id } : { group_id: id };
+    const r = await fetch(`/api/users/${user.id}/host-access`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) { toast.success("已授权"); setAddId(""); load(); }
+    else { const j = await r.json().catch(() => ({})); toast.error(j.error || "授权失败"); }
+  }
+
+  async function removeAccess(accessId: number) {
+    const r = await fetch(`/api/users/${user.id}/host-access`, {
+      method: "DELETE", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ access_id: accessId }),
+    });
+    if (r.ok) { toast.success("已撤销"); load(); }
+    else toast.error("撤销失败");
+  }
+
+  return (
+    <div className="mb-6">
+      <h3 className="text-sm font-medium mb-2 flex items-center gap-1.5"><Shield size={14} /> 主机访问权限</h3>
+      {user.role === "admin" ? (
+        <div className="text-xs text-muted-foreground bg-muted/40 rounded p-2">Admin 默认可查看全部主机，无需单独配置。</div>
+      ) : (
+        <>
+          <div className="flex gap-2 mb-3 flex-wrap">
+            <select className="input !w-auto !h-8 !text-xs" value={addType} onChange={(e) => { setAddType(e.target.value as "host" | "group"); setAddId(""); }}>
+              <option value="host">按主机</option>
+              <option value="group">按分组</option>
+            </select>
+            <select className="input flex-1 !h-8 !text-xs" value={addId} onChange={(e) => setAddId(e.target.value)}>
+              <option value="">-- 选择{addType === "host" ? "主机" : "分组"} --</option>
+              {(addType === "host" ? hosts : groups).map((item) => (
+                <option key={item.id} value={item.id}>{item.name}</option>
+              ))}
+            </select>
+            <button className="btn btn-primary !h-8 !text-xs" onClick={addAccess} disabled={!addId}>
+              <Plus size={12} /> 授权
+            </button>
+          </div>
+
+          {loading ? (
+            <p className="text-xs text-muted-foreground">加载中…</p>
+          ) : access.length === 0 ? (
+            <div className="text-xs text-muted-foreground bg-muted/40 rounded p-2">
+              暂无授权。该用户在移动端将看不到任何主机。
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {access.map((a) => (
+                <div key={a.id} className="flex items-center gap-2 text-sm card-surface !p-2">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${a.host_id ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-blue-500/15 text-blue-600 dark:text-blue-400"}`}>
+                    {a.host_id ? "主机" : "分组"}
+                  </span>
+                  <span className="flex-1 truncate">{a.host_name || a.group_name || `#${a.host_id || a.group_id}`}</span>
+                  <button className="btn btn-ghost !h-7 !w-7 !p-0 hover:!text-rose-500" onClick={() => removeAccess(a.id)} title="撤销"><Trash2 size={12} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ---- 用户 Token 管理 ---- */
+
+function UserTokensPanel({ user }: { user: UserInfo }) {
+  const [tokens, setTokens] = useState<TokenItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/users/${user.id}/tokens`, { cache: "no-store" });
+      const j = await r.json();
+      setTokens(j.tokens ?? []);
+    } catch { toast.error("加载 Token 失败"); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user.id]);
+
+  async function revoke(tokenId: number) {
+    if (!confirm("确定吊销此 Token？该用户对应设备将立即失去访问权限。")) return;
+    const r = await fetch(`/api/users/${user.id}/tokens`, {
+      method: "DELETE", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token_id: tokenId }),
+    });
+    if (r.ok) { toast.success("已吊销"); load(); }
+    else toast.error("吊销失败");
+  }
+
+  return (
+    <div>
+      <h3 className="text-sm font-medium mb-2 flex items-center gap-1.5"><Smartphone size={14} /> 移动端 Token</h3>
+      {loading ? (
+        <p className="text-xs text-muted-foreground">加载中…</p>
+      ) : tokens.length === 0 ? (
+        <div className="text-xs text-muted-foreground bg-muted/40 rounded p-2">
+          暂无 Token。用户在移动端登录后会自动创建。
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {tokens.map((t) => (
+            <div key={t.id} className="flex items-center gap-2 text-sm card-surface !p-2">
+              <Smartphone size={12} className="text-muted-foreground shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="truncate font-medium text-xs">{t.name || "未命名设备"}</div>
+                <div className="text-[10px] text-muted-foreground">
+                  {t.last_used_at ? `最后使用 ${new Date(t.last_used_at).toLocaleString()}` : "从未使用"}
+                  {t.expires_at ? ` · 过期 ${new Date(t.expires_at).toLocaleDateString()}` : ""}
+                </div>
+              </div>
+              <button className="btn btn-ghost !h-7 !px-2 !text-xs hover:!text-rose-500" onClick={() => revoke(t.id)}>吊销</button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

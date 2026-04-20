@@ -103,6 +103,54 @@ function migrate(db: Database.Database) {
       error TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_alert_events_at ON alert_events(at DESC);
+
+    CREATE TABLE IF NOT EXISTS host_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS api_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      last_used_at INTEGER,
+      expires_at INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+
+    CREATE TABLE IF NOT EXISTS user_host_access (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      host_id INTEGER REFERENCES hosts(id) ON DELETE CASCADE,
+      group_id INTEGER REFERENCES host_groups(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      CHECK (
+        (host_id IS NOT NULL AND group_id IS NULL) OR
+        (host_id IS NULL AND group_id IS NOT NULL)
+      )
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_host_access_user ON user_host_access(user_id);
+
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      key_hash TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_seen_at INTEGER,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_item_visibility (
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      item_type TEXT NOT NULL CHECK (item_type IN ('host', 'service')),
+      remote_id INTEGER NOT NULL,
+      public_visible INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (agent_id, item_type, remote_id)
+    );
   `);
   ensureColumn(db, "services", "check_type", "TEXT NOT NULL DEFAULT 'http'");
   ensureColumn(db, "services", "check_target", "TEXT");
@@ -111,6 +159,8 @@ function migrate(db: Database.Database) {
   ensureColumn(db, "users", "role", "TEXT NOT NULL DEFAULT 'admin'");
   ensureColumn(db, "users", "created_at", "TEXT NOT NULL DEFAULT (datetime('now'))");
   ensureColumn(db, "hosts", "auth_header", "TEXT");
+  ensureColumn(db, "hosts", "group_id", "INTEGER REFERENCES host_groups(id) ON DELETE SET NULL");
+  ensureColumn(db, "agents", "public_visible", "INTEGER NOT NULL DEFAULT 0");
   encryptLegacyCredentials(db);
 }
 

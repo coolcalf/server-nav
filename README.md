@@ -1,27 +1,36 @@
 # Server Nav · 自托管服务导航 + 健康监控 + 主机监控
 
-一个轻量、现代、深浅自适应的自托管"服务首页"。一个站点囊括三件事：
+一个轻量、现代、深浅自适应的自托管"服务首页"。一个站点囊括五件事：
 
 1. **服务导航**（首页 `/`）：分类卡片，快速点开你的所有内网/外网服务。
 2. **服务健康检查**：HTTP / TCP 探测，实时圆点 + 延迟趋势 sparkline + 浏览器 Tab 标题离线徽章 + 可选 Webhook 告警。
-3. **主机资源监控**（`/hosts`）：抓取 Prometheus 兼容的 `node_exporter` / `windows_exporter`，可视化 CPU / 内存 / 负载 / 磁盘，超阈值自动告警。
+3. **主机资源监控**（`/hosts`）：抓取 Prometheus 兼容的 `node_exporter` / `windows_exporter`，可视化 CPU / 内存 / 负载 / 磁盘 / 网络吞吐，超阈值自动告警。
+4. **多用户与移动端 API**：admin / viewer 两种角色，独立的 Bearer Token 认证，按用户粒度控制主机可见范围。
+5. **联邦模式（多站点聚合）**：公网设一套主控端，各局域网实例作为节点自动推送数据，一个页面监控所有站点，无需 VPN。
 
 技术栈：**Next.js 14 (App Router) + TypeScript + Tailwind + SQLite (better-sqlite3) + JWT (httpOnly cookie) + dnd-kit**。无外部依赖，单容器即可部署。
 
 ---
 
-## 截图功能一览
+## 功能一览
 
 | 模块 | 入口 | 说明 |
 | --- | --- | --- |
-| 服务首页 | `/` | 分类、搜索、卡片在线状态、延迟 sparkline |
-| 主机监控 | `/hosts` | CPU / 内存 / 负载 / 磁盘 + sparkline + 阈值告警 |
-| 管理后台 | `/admin` | 服务 CRUD、跨分类拖拽、批量导入、JSON 备份/恢复、改密、站点设置 |
-| 登录 | `/login` | 单用户口令登录，JWT cookie |
+| 服务首页 | `/` | 分类卡片、搜索、在线状态圆点、延迟 sparkline |
+| 主机监控 | `/hosts` | CPU / 内存 / 负载 / 磁盘 / 网络 + sparkline + 分组 + 拖拽排序 |
+| 主机详情 | `/hosts/:id` | 1h / 6h / 24h / 7d 大图曲线，hover 游标 |
+| 管理后台 | `/admin` | 服务 CRUD、跨分类拖拽、批量导入、JSON 备份/恢复、站点设置 |
+| 用户管理 | `/admin` → 用户 | 多用户 CRUD、角色切换、Token 管理、主机权限分配 |
+| 联邦管理 | `/admin` → 联邦 | 注册远程节点、查看在线状态、停用/删除、公开可见控制 |
+| 登录 | `/login` | 用户名/密码登录，JWT httpOnly cookie，30 天有效 |
+| 移动端 API | `/api/mobile/*` | Bearer Token 认证，按用户权限过滤主机数据 |
+| 主题定制 | 导航栏 | 深色/浅色切换 + 6 种配色主题（石墨/蓝/翠绿/玫红/紫罗兰/琥珀） |
 
 ---
 
-## 本地开发
+## 快速开始
+
+### 本地开发
 
 ```bash
 cp .env.example .env        # 改 ADMIN_PASSWORD 与 AUTH_SECRET
@@ -32,7 +41,7 @@ npm run dev
 
 首次启动按 `.env` 创建管理员账号并插入一条示例服务。账号会被标记 **"必须修改密码"**，登录后管理页顶部会提示。
 
-## 生产构建
+### 生产构建
 
 ```bash
 npm run build
@@ -57,7 +66,7 @@ docker compose up -d --build
 
 - 默认使用 Docker named volume `server_nav_data` 持久化数据库，避免宿主机目录权限导致 SQLite 无法写入。
 - 如果你想把数据库直接落到宿主机目录，使用 `docker-compose.bind.yml` 覆盖默认 volume：`docker compose -f docker-compose.yml -f docker-compose.bind.yml up -d --build`。
-- `node_exporter` 用 `network_mode: host`，跑起来后在面板里 **/hosts → 新增主机** 填 `http://<宿主机 IP>:9100/metrics` 即可监控宿主机。不需要它就把那段删掉。
+- `node_exporter` 默认归为 `monitoring` profile，不会随主服务一起启动。需要时用 `docker compose --profile monitoring up -d` 启用，跑起来后在面板里 **/hosts → 新增主机** 填 `http://<宿主机 IP>:9100/metrics` 即可监控宿主机。
 - 默认使用 `better-sqlite3` 的预编译二进制，构建通常不需要额外系统依赖。
 
 ### Docker 数据备份
@@ -95,7 +104,7 @@ docker compose up -d
 
 随便用 Nginx / Caddy 反代到 `:3000`：
 
-```caddyfile
+```nginx
 server {
     listen 80;
     # server_name nav.example.com;
@@ -163,25 +172,104 @@ sudo systemctl enable --now server-nav
 
 ## 环境变量
 
+### 基础配置
+
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `ADMIN_USERNAME` | `admin` | 初次启动创建的管理员用户名 |
-| `ADMIN_PASSWORD` | `admin123` | 初始密码（请务必改） |
-| `AUTH_SECRET` | _(必改)_ | JWT 签名密钥，`openssl rand -base64 48` 生成 |
+| `ADMIN_PASSWORD` | `change-me-please` | 初始密码（**请务必修改**） |
+| `AUTH_SECRET` | _(必改)_ | JWT 签名密钥 + 字段加密密钥派生源，`openssl rand -base64 48` 生成 |
 | `COOKIE_SECURE` | `false` | 是否给登录 cookie 加 `Secure`；直接 HTTP 访问用 `false`，HTTPS 反代后改为 `true` |
 | `DB_PATH` | `/data/app.db` | SQLite 文件位置（Docker 默认） |
-| `HEALTH_INTERVAL_MS` | `30000` | 服务巡检周期 |
-| `HEALTH_TIMEOUT_MS` | `5000` | 单次服务探测超时 |
-| `HOST_INTERVAL_MS` | `30000` | 主机巡检周期 |
-| `HOST_TIMEOUT_MS` | `5000` | 单次 exporter 抓取超时 |
-| `HOST_RETENTION_DAYS` | `7` | 主机历史采样在 SQLite 里保留天数 |
-| `HOST_CONCURRENCY` | `8` | 每轮抓取 exporter 的并发上限 |
+| `HOST_PORT` | `3000` | Docker 宿主机暴露端口（容器内固定监听 3000） |
+| `DISABLE_WEB_UI` | `false` | 设为 `true` 后隐藏所有 Web 页面（`/`、`/login`、`/admin`、`/hosts`），仅保留 `/api/*` 端点，适合纯 API 模式 |
+
+### 服务巡检
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `HEALTH_INTERVAL_MS` | `30000` | 服务巡检周期（毫秒） |
+| `HEALTH_TIMEOUT_MS` | `5000` | 单次 HTTP/TCP 探测超时 |
 | `HEALTH_CONCURRENCY` | `16` | 每轮健康探测的并发上限 |
-| `HOST_ALERT_SILENCE_MS` | _(设置里覆盖)_ | 主机告警静默（毫秒），未设且设置里也未填则 10 分钟 |
-| `HEALTH_ALERT_SILENCE_MS` | _(设置里覆盖)_ | 服务告警静默（毫秒），同上 |
-| `LOGIN_MAX_FAILS` | `5` | 登录失败多少次锁定 |
-| `LOGIN_WINDOW_MS` | `900000` | 失败计数窗口（毫秒） |
-| `LOGIN_LOCK_MS` | `900000` | 锁定时长（毫秒） |
+| `HEALTH_ALERT_SILENCE_MS` | _(设置里覆盖)_ | 服务告警静默（毫秒），数据库设置优先，否则默认 10 分钟 |
+
+### 主机巡检
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `HOST_INTERVAL_MS` | `30000` | 主机巡检周期（毫秒） |
+| `HOST_TIMEOUT_MS` | `5000` | 单次 exporter 抓取超时 |
+| `HOST_CONCURRENCY` | `8` | 每轮抓取 exporter 的并发上限 |
+| `HOST_RETENTION_DAYS` | `7` | 主机历史采样在 SQLite 里保留天数 |
+| `HOST_ALERT_SILENCE_MS` | _(设置里覆盖)_ | 主机告警静默（毫秒），数据库设置优先，否则默认 10 分钟 |
+
+### 安全 / 速率限制
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `LOGIN_MAX_FAILS` | `5` | 同一 `IP+用户名` 登录失败多少次后锁定 |
+| `LOGIN_WINDOW_MS` | `900000` | 失败计数窗口（毫秒，默认 15 分钟） |
+| `LOGIN_LOCK_MS` | `900000` | 锁定时长（毫秒，默认 15 分钟） |
+| `GLOBAL_IP_MAX_REQUESTS` | `30` | 同一 IP 在窗口期内对认证端点的最大请求数 |
+| `GLOBAL_IP_WINDOW_MS` | `60000` | 全局 IP 限速窗口（毫秒，默认 60 秒） |
+
+### 联邦模式
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `FEDERATION_MODE` | `standalone` | 运行模式：`standalone` / `master` / `agent` |
+| `MASTER_URL` | — | (agent) 主控端 URL，如 `https://nav.example.com` |
+| `AGENT_KEY` | — | (agent) 主控端分配的 API 密钥 |
+| `AGENT_NAME` | _(主机名)_ | (agent) 本节点显示名称 |
+| `AGENT_PUSH_INTERVAL_MS` | `30000` | (agent) 推送间隔（毫秒） |
+
+### Docker 构建专用
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `INSTALL_BUILD_DEPS` | `false` | 设为 `true` 在 Docker 构建时安装编译链（`python3`、`make`、`g++`），用于 `better-sqlite3` 预编译包不可用的场景 |
+
+---
+
+## 联邦模式（多站点聚合监控）
+
+当你的 Server Nav 部署在多个企业/分支局域网内，可以在公网架设一套 **主控端 (master)**，各局域网实例作为 **节点 (agent)** 实时推送数据，在主控端统一查看所有站点的服务与主机状态——无需逐个 VPN。
+
+### 部署步骤
+
+**1. 公网主控端**
+
+```bash
+# .env
+FEDERATION_MODE=master
+```
+
+启动后进入 **管理 → 联邦**，为每个远程站点创建节点，系统会生成一个 **一次性密钥**（`sn_...`），请立即保存。
+
+**2. 局域网节点**
+
+```bash
+# .env
+FEDERATION_MODE=agent
+MASTER_URL=https://公网主控端地址
+AGENT_KEY=sn_刚才保存的密钥
+AGENT_NAME=广州分公司
+AGENT_PUSH_INTERVAL_MS=30000
+```
+
+节点启动后会按 `AGENT_PUSH_INTERVAL_MS` 间隔，将本地所有主机指标和服务健康状态推送到主控端。
+
+### 主控端效果
+
+- **首页 `/`**：本地服务之后，按节点分组展示各远程站点的服务卡片 + 健康状态
+- **主机 `/hosts`**：本地主机之后，按节点分组展示各远程站点的主机 CPU / 内存 / 磁盘等指标
+- **管理 → 联邦**：查看所有节点的在线状态、上次报到时间，支持停用/删除节点
+
+### 安全说明
+
+- 节点推送时使用 `AGENT_KEY` + bcrypt 校验身份，密钥仅在创建时显示一次
+- 节点推送的数据会自动脱敏：不包含 `credentials`、`notes`、`internal_url`、`auth_header` 等敏感字段
+- 推送走 HTTPS（建议主控端启用反代 + SSL）
 
 ---
 
@@ -191,9 +279,9 @@ sudo systemctl enable --now server-nav
 
 | 字段 | 公开 | 说明 |
 | --- | --- | --- |
-| `name`, `url`, `icon`, `description`, `category` | ✅ | 卡片基础信息 |
+| `name`, `url`, `icon`, `description`, `category` | ✅ | 卡片基础信息（icon 使用 [Lucide](https://lucide.dev/) 图标名） |
 | `internal_url` | ❌ | 内网地址/端口，登录后可见并可一键复制 |
-| `credentials` | ❌ | 账号/密码/Key，登录后可显/隐/复制 |
+| `credentials` | ❌ | 账号/密码/Key（AES-256-GCM 加密存储），登录后可显/隐/复制 |
 | `notes` | ❌ | 运维备忘 |
 | `is_private` | — | 勾选后整条卡片对公开访客不可见 |
 | `check_type` | — | `http` / `tcp` / `none` |
@@ -210,6 +298,8 @@ sudo systemctl enable --now server-nav
   - 🚫 `check_type=none`：不检查
   - 旁边一条 64×16 的 SVG **延迟 sparkline**（保留最近 20 个采样，默认覆盖 10 分钟）
 - 浏览器 **Tab 标题离线徽章**：有任何服务掉线时，标题前缀 `(🔴 N) ...`，方便后台 tab 一眼看到
+- HTTP 探测返回 `< 500` 均视为在线（含 3xx/4xx），`≥ 500` 视为故障
+- TCP 探测支持自动从 URL 推导 `host:port`（识别 `http/https/mysql/postgres/redis/mongodb/ssh/ftp` 等协议默认端口）
 
 ### 搜索
 
@@ -230,6 +320,14 @@ sudo systemctl enable --now server-nav
 - **修改密码** + 默认密码风险提示
 - **站点设置**：品牌名、标题、副标题、欢迎语（支持 `{{username}}` 占位）、**告警 Webhook URL** + 测试按钮、告警静默窗口（主机/服务各一）、告警历史保留天数
 - **告警历史**：查看每一次真实推送，支持按来源筛选 / 清空
+
+### 多用户管理（`/admin` → 用户）
+
+- **创建用户**：指定用户名（`字母/数字/下划线/点/中横线`，2~40 字符）、密码（≥ 6 位）、角色（admin / viewer）
+- **角色切换**：admin 可以把用户在 admin / viewer 间切换；不允许把最后一个 admin 降级
+- **删除用户**：级联删除其 API Token 和主机权限配置；不能删除自己，不能删除最后一个 admin
+- **主机权限管理**：点击用户名进入详情面板，可按**单台主机**或**主机分组**授权 viewer 可见范围
+- **Token 管理**：查看用户已有的 API Token（设备名、最后使用时间、过期时间），可逐条吊销
 
 ---
 
@@ -286,8 +384,29 @@ docker run -d --name node_exporter --restart=always \
 
 1. 顶部 **主机** → **新增主机**
 2. 填名字、`http://192.168.1.10:9100/metrics`
-3. 点 **测试连接** → 几秒内出 `✔ node · CPU 12% · 内存 47% · 磁盘 2 个`
-4. 保存。卡片在 30s 内开始绘制 sparkline
+3. 可选：选择所属**主机分组**、填写描述、配置 Exporter 鉴权头（`Bearer xxx` 或 `Basic base64...`）
+4. 点 **测试连接** → 几秒内出 `✔ node · CPU 12% · 内存 47% · 磁盘 2 个`
+5. 保存。卡片在 30s 内开始绘制 sparkline
+
+### 主机分组与排序
+
+- **管理 → 主机分组**：创建/编辑/删除分组
+- 主机卡片支持**跨分组拖拽排序**（登录后可见拖拽手柄），基于 dnd-kit 实现
+- 空分组也会显示为可放置目标
+
+### 采集指标
+
+| 指标 | node_exporter | windows_exporter |
+| --- | --- | --- |
+| CPU 使用率 | ✅ 差值计算 | ✅ 差值计算 |
+| 内存使用率 | ✅ MemAvailable 优先 | ✅ physical_memory |
+| 系统负载 | ✅ load1 | — |
+| 磁盘使用率 | ✅ 按挂载点，过滤伪 FS | ✅ 按卷，过滤 _Total |
+| 网络吞吐 | ✅ rx/tx Bps，过滤虚拟网卡 | ✅ rx/tx Bps，过滤虚拟 NIC |
+| 在线时长 | ✅ boot_time 推算 | — |
+
+- **Exporter 类型**：默认 `auto`（自动从指标名前缀推断），也可手动指定 `node` 或 `windows`
+- **主机详情页**（`/hosts/:id`）：1h / 6h / 24h / 7d 时间范围的大图曲线，hover 显示游标值，数据从 SQLite 持久化采样聚合而来
 
 ### 阈值与告警
 
@@ -349,7 +468,7 @@ docker run -d --name node_exporter --restart=always \
 
 1. 频道 **设置 → 整合 → Webhook → 新建 Webhook**（需要管理员权限）
 2. 起个名字、选频道，点 **复制 Webhook URL**
-3. 粘到 Server Hub 设置里，点 **测试**，频道立刻收到消息
+3. 粘到 Server Nav 设置里，点 **测试**，频道立刻收到消息
 
 Discord 读 `content` 字段，我们直接带了，零改造。URL 形如：
 
@@ -382,14 +501,14 @@ https://hooks.slack.com/services/TXXXXXXX/BXXXXXXX/xxxxxxxxxxxxxxxxxxxxxxxx
 { "msg_type": "text", "content": { "text": "..." } }
 ```
 
-而 Server Hub 发出的 `content` 是**字符串**，直接发会被飞书拒收。两种做法：
+而 Server Nav 发出的 `content` 是**字符串**，直接发会被飞书拒收。两种做法：
 
-**1）群机器人**：群设置 → **群机器人 → 添加机器人 → 自定义机器人**，复制 URL（形如 `https://open.feishu.cn/open-apis/bot/v2/hook/xxxx`）。然后**不要直接**把 URL 填到 Server Hub；把它配到下面任一转发器：
+**1）群机器人**：群设置 → **群机器人 → 添加机器人 → 自定义机器人**，复制 URL（形如 `https://open.feishu.cn/open-apis/bot/v2/hook/xxxx`）。然后**不要直接**把 URL 填到 Server Nav；把它配到下面任一转发器：
 
 **2）Cloudflare Workers 转发器**（最快，5 分钟部署、免费）：
 
 ```js
-// 部署后用 Workers URL 替代原 webhook URL 填进 Server Hub
+// 部署后用 Workers URL 替代原 webhook URL 填进 Server Nav
 const LARK = "https://open.feishu.cn/open-apis/bot/v2/hook/替换为你的token";
 export default {
   async fetch(req) {
@@ -439,36 +558,157 @@ export default {
 
 ---
 
+## 移动端 API
+
+为移动端 App 提供独立的 **Bearer Token 认证** + **按用户粒度的主机访问权限控制**，与 Web 端的 cookie 会话互不干扰。
+
+### 认证方式
+
+移动端使用 **API Token**（前缀 `snav_`），通过 `Authorization: Bearer <token>` 请求头传递。Token 在登录时签发，默认 90 天有效，可随时吊销。
+
+### 权限模型
+
+| 角色 | 可见范围 |
+| --- | --- |
+| `admin` | 全部主机 |
+| `viewer` | 仅管理员显式授权的主机或主机分组 |
+
+管理员通过 `/api/users/:id/host-access` 管理每个 viewer 用户可以看到哪些主机（支持按单台主机或按分组授权）。
+
+### API 列表
+
+#### 认证
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/mobile/auth/login` | 用户名密码登录，返回 API Token |
+| `POST` | `/api/mobile/auth/logout` | 吊销当前 Token |
+
+**登录请求：**
+
+```json
+POST /api/mobile/auth/login
+{ "username": "alice", "password": "...", "device_name": "iPhone 16" }
+```
+
+**登录响应：**
+
+```json
+{
+  "token": "snav_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "token_id": 1,
+  "expires_at": 1726000000000,
+  "user": { "id": 2, "username": "alice", "role": "viewer" }
+}
+```
+
+> ⚠️ Token 仅在登录时返回一次，请客户端安全保存。
+
+#### 用户信息
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/mobile/profile` | 当前用户信息 + Token 列表 |
+
+#### 主机数据
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/mobile/hosts` | 有权限的主机列表 + 分组 + 实时指标 + 趋势数据 |
+| `GET` | `/api/mobile/hosts/:id` | 单台主机详情 + 实时指标 |
+| `GET` | `/api/mobile/hosts/:id/history?range=1h` | 主机历史曲线（`1h` / `6h` / `24h` / `7d`） |
+
+所有主机 API 自动按用户权限过滤，`viewer` 用户只能看到被授权的主机。
+
+响应中会隐藏 `exporter_url`、`auth_header` 等敏感字段。
+
+#### 权限管理（管理员专用，Web 端调用）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/users/:id/host-access` | 查看用户的主机访问权限 |
+| `POST` | `/api/users/:id/host-access` | 授权（`{ "host_id": 3 }` 或 `{ "group_id": 1 }`） |
+| `DELETE` | `/api/users/:id/host-access` | 撤销（`{ "access_id": 5 }`） |
+| `GET` | `/api/users/:id/tokens` | 查看用户的 API Token 列表 |
+| `DELETE` | `/api/users/:id/tokens` | 吊销 Token（`{ "token_id": 1 }`） |
+
+### 移动端接入示例（cURL）
+
+```bash
+# 1. 登录获取 Token
+curl -X POST https://nav.example.com/api/mobile/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"xxx","device_name":"curl-test"}'
+
+# 2. 用 Token 拉取主机列表
+curl https://nav.example.com/api/mobile/hosts \
+  -H 'Authorization: Bearer snav_xxxxxxxx'
+
+# 3. 查看某台主机 24h 历史
+curl 'https://nav.example.com/api/mobile/hosts/3/history?range=24h' \
+  -H 'Authorization: Bearer snav_xxxxxxxx'
+
+# 4. 退出登录（吊销 Token）
+curl -X POST https://nav.example.com/api/mobile/auth/logout \
+  -H 'Authorization: Bearer snav_xxxxxxxx'
+```
+
+---
+
 ## 目录结构
 
 ```
 src/
+  middleware.ts              # 安全头 + API-only 模式 + 全局 IP 速率限制
   app/
-    page.tsx               # 公开服务首页
-    hosts/page.tsx         # 主机监控页
-    login/page.tsx         # 登录
-    admin/                 # 管理后台
+    layout.tsx               # 根布局（主题、配色初始化、Toaster）
+    page.tsx                 # 公开服务首页
+    login/page.tsx           # 登录
+    hosts/
+      page.tsx               # 主机监控列表
+      [id]/page.tsx          # 主机详情大图
+    admin/                   # 管理后台（服务/用户/联邦/设置）
     api/
-      auth/                # login / logout / me / change-password
-      services/            # CRUD + reorder + bulk
-      categories/          # CRUD
-      settings/            # 站点设置
-      health/              # 单次探测 / 全量状态 (statuses)
-      hosts/               # CRUD + metrics + probe
-      backup/              # export / import
+      auth/                  # login / logout / me / change-password
+      services/              # CRUD + reorder + bulk
+      categories/            # CRUD
+      settings/              # 站点设置 + test-alert
+      alerts/                # 告警历史查询 / 清空
+      health/                # 单次探测 / 全量状态 (statuses)
+      hosts/                 # CRUD + metrics + probe + reorder + history
+      host-groups/           # 主机分组 CRUD
+      mobile/                # 移动端 API（Token 认证）
+        auth/                #   login / logout
+        profile/             #   当前用户信息
+        hosts/               #   主机列表 / 详情 / 历史
+      users/                 # 用户 CRUD + host-access + tokens
+      backup/                # export / import
+      federation/            # push / agents / status
   components/
-    nav-bar.tsx, theme-toggle.tsx, accent-picker.tsx
-    service-card.tsx, home-browser.tsx
-    hosts-browser.tsx
-    sparkline.tsx
+    nav-bar.tsx              # 顶部导航（主机/管理/登录/登出）
+    theme-toggle.tsx         # 深色/浅色切换
+    theme-provider.tsx       # next-themes 封装
+    accent-picker.tsx        # 6 种配色主题选择器
+    service-card.tsx         # 服务卡片
+    home-browser.tsx         # 首页服务浏览器（搜索/分类/状态）
+    hosts-browser.tsx        # 主机列表浏览器（分组/拖拽/sparkline）
+    host-detail-client.tsx   # 主机详情页客户端组件
+    sparkline.tsx            # SVG 迷你折线图
+    time-series-chart.tsx    # 大图时序曲线（1h/6h/24h/7d）
   lib/
-    db.ts                  # SQLite 初始化 + 迁移 + seed
-    auth.ts                # JWT cookie
-    health-monitor.ts      # 服务巡检 + 历史 + 告警
-    host-monitor.ts        # 主机巡检 + 历史 + 告警
-    prom-parser.ts         # Prometheus 文本解析
-    types.ts
-data/app.db                # SQLite 数据
+    db.ts                    # SQLite 初始化 + 迁移 + seed + 设置读写
+    auth.ts                  # JWT cookie 会话（Web 端）
+    mobile-auth.ts           # API Token 认证 + 权限查询（移动端）
+    health-monitor.ts        # 服务巡检 + 历史 + 告警
+    host-monitor.ts          # 主机巡检 + 历史 + 告警 + 持久化
+    prom-parser.ts           # Prometheus 文本格式解析器
+    alerts.ts                # Webhook 发送 + 告警事件记录 + 静默 + 裁剪
+    crypto.ts                # AES-256-GCM 字段加密（credentials）
+    federation.ts            # 联邦模式核心逻辑（master / agent）
+    rate-limit.ts            # 登录速率限制器
+    types.ts                 # TypeScript 类型定义
+    utils.ts                 # 通用工具函数
+data/app.db                  # SQLite 数据（自动创建）
 ```
 
 ---
@@ -502,28 +742,49 @@ docker compose up -d
 **首次启动密码警告条**
 首个种子用户有 `must_change_password = 1` 标记，登录后管理页顶部会显示橙色提示，点 **立即修改** 即可清除。
 
+**如何只暴露 API 不显示页面？**
+在 `.env` 中设置 `DISABLE_WEB_UI=true`，所有 Web 页面（`/`、`/login`、`/admin`、`/hosts`）将返回 403，仅保留 `/api/*` 端点。适合只需要给移动端 App 提供数据的场景。
+
+**修改了 `AUTH_SECRET` 后 credentials 解密失败？**
+`credentials` 字段的 AES-256-GCM 加密密钥由 `AUTH_SECRET` 派生。如果更换了 `AUTH_SECRET`，已加密的 credentials 将无法解密（解密失败时返回原始密文，不会导致 500 崩溃）。建议在更换前先 **JSON 导出**（导出时自动解密为明文），更换后再导入。
+
 ---
 
 ## 安全提示
 
 - **务必修改** `.env` 里的 `ADMIN_PASSWORD`、`AUTH_SECRET`
 - 公开互联网暴露请走 HTTPS（Cloudflare、Nginx + Let's Encrypt、Caddy 任选）
-- 凭据字段 `credentials` 在数据库中使用 **AES-256-GCM 加密**（密钥由 `AUTH_SECRET` 派生，首次启动会自动把已有明文加密升级）。注意：**`AUTH_SECRET` 丢失将无法解密旧 credentials**，请务必备份。若使用 bind mount 持久化 SQLite 文件，仍建议对宿主机数据库文件收紧权限。
-- 登录接口内置速率限制：同一 `IP + username` 连续 `LOGIN_MAX_FAILS` 次错密码会锁定 `LOGIN_LOCK_MS` 毫秒（默认 5 次 / 15 分钟），返回 `429`
+- 凭据字段 `credentials` 在数据库中使用 **AES-256-GCM 加密**（密钥由 `AUTH_SECRET` + `scrypt` 派生 32 字节密钥，首次启动会自动把已有明文加密升级）。注意：**`AUTH_SECRET` 丢失将无法解密旧 credentials**，请务必备份
+- **双层速率限制**：
+  - **全局 IP 限速**（中间件层）：同一 IP 在 `GLOBAL_IP_WINDOW_MS`（默认 60s）内对认证端点（`/api/auth/login`、`/api/auth/change-password`、`/api/mobile/auth/login`）最多 `GLOBAL_IP_MAX_REQUESTS`（默认 30）次请求
+  - **用户级限速**（应用层）：同一 `IP + username` 连续 `LOGIN_MAX_FAILS`（默认 5）次错密码会锁定 `LOGIN_LOCK_MS`（默认 15 分钟），返回 `429`
+  - 修改密码接口同样受速率限制保护
+- **安全响应头**（中间件自动注入）：`X-Content-Type-Options: nosniff`、`X-Frame-Options: SAMEORIGIN`、`X-XSS-Protection`、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy`（禁用摄像头/麦克风/地理位置）；API 响应自动加 `Cache-Control: no-store`
+- **API-only 模式**：设置 `DISABLE_WEB_UI=true` 后所有 Web 页面返回 403，仅保留 API 端点，适合只给移动端 App 提供接口的场景
 - 主机的 `auth_header` 字段只在已登录状态下返回；未登录的公开 API 响应会剥掉它
+- 联邦模式下节点推送会自动脱敏，不推送 `credentials`、`notes`、`internal_url`、`auth_header`
+- 若使用 bind mount 持久化 SQLite 文件，建议对宿主机数据库文件收紧权限
 
 ---
 
-## 路线图（社区任意提）
+## 路线图
 
-- [x] 服务 + 健康检查 + sparkline + tab 徽章
-- [x] 跨分类拖拽 / 批量导入 / JSON 备份
-- [x] 修改密码 + 默认口令提示
-- [x] 主机监控（node / windows exporter）+ 阈值告警
-- [x] Docker compose with node_exporter sidecar
-- [x] 主机详情页（1h / 6h / 24h / 7d 大图，带 hover 游标）
+- [x] 服务导航 + 健康检查 + sparkline + tab 离线徽章
+- [x] 跨分类拖拽 / 批量导入 / JSON 备份恢复
+- [x] 修改密码 + 默认口令风险提示
+- [x] 主机监控（node / windows exporter）+ CPU / 内存 / 磁盘 / 网络吞吐 + 阈值告警
+- [x] 主机分组 + 跨分组拖拽排序
+- [x] 主机详情页（1h / 6h / 24h / 7d 大图曲线，hover 游标）
 - [x] 主机历史持久化到 SQLite + 按区间聚合
-- [ ] 多用户 + 角色（admin / viewer）
+- [x] Docker compose + node_exporter sidecar（monitoring profile）
+- [x] 多用户管理 + 角色（admin / viewer）
+- [x] 移动端 API（Bearer Token + 按用户权限过滤主机）
+- [x] 联邦模式（master / agent 多站点聚合监控）
+- [x] 深色/浅色主题 + 6 种配色方案
+- [x] 凭据 AES-256-GCM 加密存储
+- [x] 双层速率限制 + 安全响应头
+- [x] API-only 模式（`DISABLE_WEB_UI`）
+- [ ] 移动端 App（Flutter / React Native）
 - [ ] 飞书 / 企业微信原生卡片格式
 - [ ] PWA + 移动端图标
 

@@ -17,6 +17,7 @@ const updateSchema = z.object({
   disk_threshold: z.number().int().min(1).max(100).optional(),
   description: z.string().max(300).nullable().optional(),
   auth_header: z.string().max(500).nullable().optional(),
+  group_id: z.number().int().nullable().optional(),
   sort_order: z.number().int().optional(),
 });
 

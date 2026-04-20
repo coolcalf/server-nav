@@ -34,8 +34,15 @@ export type PublicService = Omit<
   "internal_url" | "credentials" | "notes" | "is_private"
 >;
 
+export type HostGroup = {
+  id: number;
+  name: string;
+  sort_order: number;
+};
+
 export type Host = {
   id: number;
+  group_id: number | null;
   name: string;
   exporter_url: string;
   /** 'auto' | 'node' | 'windows' */
@@ -52,6 +59,24 @@ export type Host = {
   sort_order: number;
   created_at: string;
   updated_at: string;
+};
+
+export type ApiToken = {
+  id: number;
+  user_id: number;
+  token_hash: string;
+  name: string;
+  last_used_at: number | null;
+  expires_at: number | null;
+  created_at: string;
+};
+
+export type UserHostAccess = {
+  id: number;
+  user_id: number;
+  host_id: number | null;
+  group_id: number | null;
+  created_at: string;
 };
 
 export type HostMetrics = {
