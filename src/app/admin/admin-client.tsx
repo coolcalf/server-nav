@@ -1628,7 +1628,7 @@ function FederationDialog({ onClose }: { onClose: () => void }) {
 /* -------------------- 用户管理对话框 -------------------- */
 
 type UserInfo = { id: number; username: string; role: "admin" | "viewer"; must_change_password: boolean; created_at: string };
-type HostAccessItem = { id: number; user_id: number; host_id: number | null; group_id: number | null; host_name: string | null; group_name: string | null; created_at: string };
+type HostAccessItem = { id: number; user_id: number; host_id: number | null; group_id: number | null; agent_id: string | null; remote_host_id: number | null; host_name: string | null; group_name: string | null; agent_name: string | null; remote_host_name: string | null; created_at: string };
 type TokenItem = { id: number; name: string; last_used_at: number | null; expires_at: number | null; created_at: string };
 
 function UsersDialog({ onClose }: { onClose: () => void }) {
@@ -1816,9 +1816,12 @@ function UserHostAccessPanel({ user }: { user: UserInfo }) {
   const [access, setAccess] = useState<HostAccessItem[]>([]);
   const [hosts, setHosts] = useState<{ id: number; name: string }[]>([]);
   const [groups, setGroups] = useState<{ id: number; name: string }[]>([]);
+  const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
+  const [remoteHosts, setRemoteHosts] = useState<{ agentId: string; hosts: { id: number; name: string }[] }[]>([]);
   const [loading, setLoading] = useState(true);
-  const [addType, setAddType] = useState<"host" | "group">("host");
+  const [addType, setAddType] = useState<"host" | "group" | "agent" | "remote_host">("host");
   const [addId, setAddId] = useState("");
+  const [selectedAgent, setSelectedAgent] = useState("");
 
   async function load() {
     setLoading(true);
@@ -1830,8 +1833,25 @@ function UserHostAccessPanel({ user }: { user: UserInfo }) {
       const aj = await ar.json();
       const hj = await hr.json();
       setAccess(aj.access ?? []);
-      setHosts((hj.hosts ?? []).map((h: { id: number; name: string }) => ({ id: h.id, name: h.name })));
-      setGroups((hj.groups ?? []).map((g: { id: number; name: string }) => ({ id: g.id, name: g.name })));
+      setAgents(aj.agents ?? []);
+      setRemoteHosts(aj.remoteHosts ?? []);
+      const loadedHosts = (hj.hosts ?? []).map((h: { id: number; name: string }) => ({ id: h.id, name: h.name }));
+      const loadedGroups = (hj.groups ?? []).map((g: { id: number; name: string }) => ({ id: g.id, name: g.name }));
+      const loadedAgents = aj.agents ?? [];
+      setHosts(loadedHosts);
+      setGroups(loadedGroups);
+      // 自动切换到有数据的授权类型
+      setAddType(prev => {
+        if (prev === "host" && loadedHosts.length === 0) {
+          if (loadedGroups.length > 0) return "group";
+          if (loadedAgents.length > 0) return "agent";
+        }
+        if (prev === "group" && loadedGroups.length === 0) {
+          if (loadedHosts.length > 0) return "host";
+          if (loadedAgents.length > 0) return "agent";
+        }
+        return prev;
+      });
     } catch { toast.error("加载权限失败"); }
     finally { setLoading(false); }
   }
@@ -1839,9 +1859,11 @@ function UserHostAccessPanel({ user }: { user: UserInfo }) {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user.id]);
 
   async function addAccess() {
-    const id = Number(addId);
-    if (!id) return;
-    const body = addType === "host" ? { host_id: id } : { group_id: id };
+    let body: Record<string, unknown>;
+    if (addType === "host") { if (!addId) return; body = { host_id: Number(addId) }; }
+    else if (addType === "group") { if (!addId) return; body = { group_id: Number(addId) }; }
+    else if (addType === "agent") { if (!addId) return; body = { agent_id: addId }; }
+    else { if (!selectedAgent || !addId) return; body = { agent_id: selectedAgent, remote_host_id: Number(addId) }; }
     const r = await fetch(`/api/users/${user.id}/host-access`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -1859,6 +1881,25 @@ function UserHostAccessPanel({ user }: { user: UserInfo }) {
     else toast.error("撤销失败");
   }
 
+  const hasAgents = agents.length > 0;
+  const isRemoteHost = addType === "remote_host";
+  const agentHostList = isRemoteHost ? (remoteHosts.find((r) => r.agentId === selectedAgent)?.hosts ?? []) : [];
+  const dropdownItems = addType === "host" ? hosts : addType === "group" ? groups : addType === "agent" ? agents : agentHostList;
+  const dropdownLabel = addType === "host" ? "主机" : addType === "group" ? "分组" : addType === "agent" ? "节点" : "远程主机";
+  const canAdd = isRemoteHost ? (!!selectedAgent && !!addId) : !!addId;
+
+  function accessBadge(a: HostAccessItem) {
+    if (a.agent_id && a.remote_host_id) return { label: "远程主机", cls: "bg-orange-500/15 text-orange-600 dark:text-orange-400" };
+    if (a.agent_id) return { label: "节点", cls: "bg-purple-500/15 text-purple-600 dark:text-purple-400" };
+    if (a.host_id) return { label: "主机", cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" };
+    return { label: "分组", cls: "bg-blue-500/15 text-blue-600 dark:text-blue-400" };
+  }
+
+  function accessName(a: HostAccessItem) {
+    if (a.agent_id && a.remote_host_id) return `${a.agent_name || a.agent_id} / ${a.remote_host_name || `#${a.remote_host_id}`}`;
+    return a.agent_name || a.host_name || a.group_name || `#${a.agent_id || a.host_id || a.group_id}`;
+  }
+
   return (
     <div className="mb-6">
       <h3 className="text-sm font-medium mb-2 flex items-center gap-1.5"><Shield size={14} /> 主机访问权限</h3>
@@ -1867,17 +1908,25 @@ function UserHostAccessPanel({ user }: { user: UserInfo }) {
       ) : (
         <>
           <div className="flex gap-2 mb-3 flex-wrap">
-            <select className="input !w-auto !h-8 !text-xs" value={addType} onChange={(e) => { setAddType(e.target.value as "host" | "group"); setAddId(""); }}>
-              <option value="host">按主机</option>
-              <option value="group">按分组</option>
+            <select className="input !w-auto !h-8 !text-xs" value={addType} onChange={(e) => { setAddType(e.target.value as typeof addType); setAddId(""); setSelectedAgent(""); }}>
+              {hosts.length > 0 && <option value="host">按主机</option>}
+              {groups.length > 0 && <option value="group">按分组</option>}
+              {hasAgents && <option value="agent">按节点</option>}
+              {hasAgents && <option value="remote_host">按远程主机</option>}
             </select>
+            {isRemoteHost && (
+              <select className="input !w-auto !h-8 !text-xs" value={selectedAgent} onChange={(e) => { setSelectedAgent(e.target.value); setAddId(""); }}>
+                <option value="">-- 选择节点 --</option>
+                {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            )}
             <select className="input flex-1 !h-8 !text-xs" value={addId} onChange={(e) => setAddId(e.target.value)}>
-              <option value="">-- 选择{addType === "host" ? "主机" : "分组"} --</option>
-              {(addType === "host" ? hosts : groups).map((item) => (
+              <option value="">-- 选择{dropdownLabel} --</option>
+              {dropdownItems.map((item) => (
                 <option key={item.id} value={item.id}>{item.name}</option>
               ))}
             </select>
-            <button className="btn btn-primary !h-8 !text-xs" onClick={addAccess} disabled={!addId}>
+            <button className="btn btn-primary !h-8 !text-xs" onClick={addAccess} disabled={!canAdd}>
               <Plus size={12} /> 授权
             </button>
           </div>
@@ -1890,15 +1939,16 @@ function UserHostAccessPanel({ user }: { user: UserInfo }) {
             </div>
           ) : (
             <div className="space-y-1">
-              {access.map((a) => (
-                <div key={a.id} className="flex items-center gap-2 text-sm card-surface !p-2">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${a.host_id ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-blue-500/15 text-blue-600 dark:text-blue-400"}`}>
-                    {a.host_id ? "主机" : "分组"}
-                  </span>
-                  <span className="flex-1 truncate">{a.host_name || a.group_name || `#${a.host_id || a.group_id}`}</span>
-                  <button className="btn btn-ghost !h-7 !w-7 !p-0 hover:!text-rose-500" onClick={() => removeAccess(a.id)} title="撤销"><Trash2 size={12} /></button>
-                </div>
-              ))}
+              {access.map((a) => {
+                const badge = accessBadge(a);
+                return (
+                  <div key={a.id} className="flex items-center gap-2 text-sm card-surface !p-2">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${badge.cls}`}>{badge.label}</span>
+                    <span className="flex-1 truncate">{accessName(a)}</span>
+                    <button className="btn btn-ghost !h-7 !w-7 !p-0 hover:!text-rose-500" onClick={() => removeAccess(a.id)} title="撤销"><Trash2 size={12} /></button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </>

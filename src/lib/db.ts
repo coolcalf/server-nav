@@ -126,10 +126,14 @@ function migrate(db: Database.Database) {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       host_id INTEGER REFERENCES hosts(id) ON DELETE CASCADE,
       group_id INTEGER REFERENCES host_groups(id) ON DELETE CASCADE,
+      agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
+      remote_host_id INTEGER,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       CHECK (
-        (host_id IS NOT NULL AND group_id IS NULL) OR
-        (host_id IS NULL AND group_id IS NOT NULL)
+        (host_id IS NOT NULL AND group_id IS NULL AND agent_id IS NULL AND remote_host_id IS NULL) OR
+        (host_id IS NULL AND group_id IS NOT NULL AND agent_id IS NULL AND remote_host_id IS NULL) OR
+        (host_id IS NULL AND group_id IS NULL AND agent_id IS NOT NULL AND remote_host_id IS NULL) OR
+        (host_id IS NULL AND group_id IS NULL AND agent_id IS NOT NULL AND remote_host_id IS NOT NULL)
       )
     );
     CREATE INDEX IF NOT EXISTS idx_user_host_access_user ON user_host_access(user_id);
@@ -161,7 +165,49 @@ function migrate(db: Database.Database) {
   ensureColumn(db, "hosts", "auth_header", "TEXT");
   ensureColumn(db, "hosts", "group_id", "INTEGER REFERENCES host_groups(id) ON DELETE SET NULL");
   ensureColumn(db, "agents", "public_visible", "INTEGER NOT NULL DEFAULT 0");
+  migrateUserHostAccessForAgent(db);
   encryptLegacyCredentials(db);
+}
+
+/** 迁移 user_host_access 表，添加 agent_id / remote_host_id 列并更新 CHECK 约束（幂等）。 */
+function migrateUserHostAccessForAgent(db: Database.Database) {
+  const row = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='user_host_access'"
+  ).get() as { sql: string } | undefined;
+  if (!row) return; // 表不存在（会由 CREATE TABLE IF NOT EXISTS 创建）
+  // 检查 CHECK 子句是否已包含 remote_host_id（最终态）
+  const checkMatch = row.sql.match(/CHECK\s*\(([\s\S]*)\)\s*\)/i);
+  if (checkMatch && checkMatch[1].includes("remote_host_id")) return; // 已是最新
+
+  // 检测旧列情况
+  const cols = db.prepare("PRAGMA table_info(user_host_access)").all() as { name: string }[];
+  const colNames = new Set(cols.map((c) => c.name));
+
+  const insertCols = ["id", "user_id", "host_id", "group_id", "created_at"];
+  if (colNames.has("agent_id")) insertCols.splice(4, 0, "agent_id");
+
+  db.exec(`
+    CREATE TABLE user_host_access_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      host_id INTEGER REFERENCES hosts(id) ON DELETE CASCADE,
+      group_id INTEGER REFERENCES host_groups(id) ON DELETE CASCADE,
+      agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
+      remote_host_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      CHECK (
+        (host_id IS NOT NULL AND group_id IS NULL AND agent_id IS NULL AND remote_host_id IS NULL) OR
+        (host_id IS NULL AND group_id IS NOT NULL AND agent_id IS NULL AND remote_host_id IS NULL) OR
+        (host_id IS NULL AND group_id IS NULL AND agent_id IS NOT NULL AND remote_host_id IS NULL) OR
+        (host_id IS NULL AND group_id IS NULL AND agent_id IS NOT NULL AND remote_host_id IS NOT NULL)
+      )
+    );
+    INSERT INTO user_host_access_new (${insertCols.join(", ")})
+      SELECT ${insertCols.join(", ")} FROM user_host_access;
+    DROP TABLE user_host_access;
+    ALTER TABLE user_host_access_new RENAME TO user_host_access;
+    CREATE INDEX IF NOT EXISTS idx_user_host_access_user ON user_host_access(user_id);
+  `);
 }
 
 /** 一次性把旧的明文 credentials 升级为 AES-GCM 密文（幂等）。 */

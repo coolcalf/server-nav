@@ -76,6 +76,8 @@ export type UserHostAccess = {
   user_id: number;
   host_id: number | null;
   group_id: number | null;
+  agent_id: string | null;
+  remote_host_id: number | null;
   created_at: string;
 };
 

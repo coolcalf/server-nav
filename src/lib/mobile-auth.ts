@@ -100,7 +100,7 @@ export function requireMobileAuth(req: Request): MobileSession | Response {
 
 /* ───── 权限查询：用户能看到哪些主机 ───── */
 
-/** 返回该用户可看到的主机 id 集合。admin 返回 null 表示"全部可见"。 */
+/** 返回该用户可看到的本地主机 id 集合。admin 返回 null 表示"全部可见"。 */
 export function getAccessibleHostIds(userId: number, role: Role): Set<number> | null {
   if (role === "admin") return null; // admin 看全部
   const db = getDb();
@@ -127,6 +127,30 @@ export function getAccessibleHostIds(userId: number, role: Role): Set<number> | 
   return ids;
 }
 
+/** 返回该用户被授权的 agent 访问信息。admin 返回 null 表示“全部可见”。 */
+export function getAccessibleAgentGrants(userId: number, role: Role): {
+  fullAgents: Set<string>;
+  hostGrants: Map<string, Set<number>>;
+} | null {
+  if (role === "admin") return null;
+  const db = getDb();
+  const rows = db.prepare(
+    "SELECT agent_id, remote_host_id FROM user_host_access WHERE user_id = ? AND agent_id IS NOT NULL"
+  ).all(userId) as { agent_id: string; remote_host_id: number | null }[];
+  const fullAgents = new Set<string>();
+  const hostGrants = new Map<string, Set<number>>();
+  for (const r of rows) {
+    if (r.remote_host_id == null) {
+      fullAgents.add(r.agent_id);
+    } else {
+      let s = hostGrants.get(r.agent_id);
+      if (!s) { s = new Set(); hostGrants.set(r.agent_id, s); }
+      s.add(r.remote_host_id);
+    }
+  }
+  return { fullAgents, hostGrants };
+}
+
 /** 过滤主机列表，只保留用户有权访问的（admin 不过滤） */
 export function filterHostsByAccess(hosts: Host[], userId: number, role: Role): Host[] {
   const ids = getAccessibleHostIds(userId, role);
@@ -147,6 +171,8 @@ export function addUserHostAccess(
   userId: number,
   hostId: number | null,
   groupId: number | null,
+  agentId: string | null = null,
+  remoteHostId: number | null = null,
 ): UserHostAccess {
   const db = getDb();
   // 去重
@@ -162,9 +188,21 @@ export function addUserHostAccess(
     ).get(userId, groupId);
     if (exist) return db.prepare("SELECT * FROM user_host_access WHERE user_id = ? AND group_id = ?").get(userId, groupId) as UserHostAccess;
   }
+  if (agentId != null && remoteHostId == null) {
+    const exist = db.prepare(
+      "SELECT id FROM user_host_access WHERE user_id = ? AND agent_id = ? AND remote_host_id IS NULL"
+    ).get(userId, agentId);
+    if (exist) return db.prepare("SELECT * FROM user_host_access WHERE user_id = ? AND agent_id = ? AND remote_host_id IS NULL").get(userId, agentId) as UserHostAccess;
+  }
+  if (agentId != null && remoteHostId != null) {
+    const exist = db.prepare(
+      "SELECT id FROM user_host_access WHERE user_id = ? AND agent_id = ? AND remote_host_id = ?"
+    ).get(userId, agentId, remoteHostId);
+    if (exist) return db.prepare("SELECT * FROM user_host_access WHERE user_id = ? AND agent_id = ? AND remote_host_id = ?").get(userId, agentId, remoteHostId) as UserHostAccess;
+  }
   const info = db.prepare(
-    "INSERT INTO user_host_access (user_id, host_id, group_id) VALUES (?, ?, ?)"
-  ).run(userId, hostId, groupId);
+    "INSERT INTO user_host_access (user_id, host_id, group_id, agent_id, remote_host_id) VALUES (?, ?, ?, ?, ?)"
+  ).run(userId, hostId, groupId, agentId, remoteHostId);
   return db.prepare("SELECT * FROM user_host_access WHERE id = ?").get(Number(info.lastInsertRowid)) as UserHostAccess;
 }
 
