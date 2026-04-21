@@ -60,8 +60,8 @@ export default function LoginPage() {
           </span>
           <span>{brand}</span>
         </Link>
-        <h1 className="text-xl font-semibold">登录管理后台</h1>
-        <p className="text-sm text-muted-foreground mt-1">登录后可管理服务并查看隐藏字段。</p>
+        <h1 className="text-xl font-semibold">登录</h1>
+        {/* <p className="text-sm text-muted-foreground mt-1">登录后可管理服务并查看隐藏字段。</p> */}
 
         <form onSubmit={submit} className="mt-6 space-y-4">
           <div>
@@ -77,9 +77,9 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="text-xs text-muted-foreground mt-6 text-center">
-          初始账号在 <code>.env</code> 的 <code>ADMIN_USERNAME / ADMIN_PASSWORD</code> 中配置。
-        </p>
+        {/* <p className="text-xs text-muted-foreground mt-6 text-center">
+		  初始账号在 <code>.env</code> 的 <code>ADMIN_USERNAME / ADMIN_PASSWORD</code> 中配置。
+		</p> */}
 
         <div className="mt-4 text-center">
           <Link href="/" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
